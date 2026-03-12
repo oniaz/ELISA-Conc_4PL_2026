@@ -5,9 +5,17 @@ import matplotlib.ticker as ticker
 import streamlit as st
 import pandas as pd
 import streamlit_analytics2 as streamlit_analytics
+import json
+import tempfile
+
+# Write firebase credentials to a temp file
+firebase_creds = dict(st.secrets["firebase"])
+with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+    json.dump(firebase_creds, f)
+    firebase_key_path = f.name
 
 streamlit_analytics.start_tracking(
-    firestore_key_file=dict(st.secrets["firebase"]),
+    firestore_key_file=firebase_key_path,
     firestore_collection_name="analytics"
 )
 
