@@ -26,7 +26,6 @@ html, body, [class*="css"] {
     border-left: 3px solid var(--text-color, currentColor);
     padding: 6px 0 6px 16px;
     margin-bottom: 28px;
-    opacity: 0.95;
 }
 .title-block-h1 {
     font-family: 'DM Mono', monospace;
@@ -38,7 +37,7 @@ html, body, [class*="css"] {
 .title-block p {
     font-family: 'DM Mono', monospace;
     font-size: 0.7rem;
-    opacity: 0.5;
+    color: #999;
     margin: 4px 0 0 0;
     letter-spacing: 0.5px;
 }
@@ -170,12 +169,13 @@ def inverse_four_param_logistic(OD, A, B, C, D):
     return C * (numerator ** (1 / B))
 
 def fit_model(concentration, OD):
-    # Bounds: A,D unconstrained; B > 0 (positive slope); C > 0 (EC50 must be positive)
+    # Fit OD = f(concentration): concentration is X, OD is Y
+    # Bounds: B > 0 (positive slope); C > 0 (EC50 must be positive)
     lower = [-np.inf, 1e-6,  1e-9, -np.inf]
     upper = [ np.inf, np.inf, np.inf,  np.inf]
     params, covariance = opt.curve_fit(
         four_param_logistic, concentration, OD,
-        p0=[min(OD), 1.0, np.median(concentration), max(OD)],
+        p0=[min(OD), 1.0, np.median(concentration[concentration > 0] if np.any(concentration > 0) else concentration), max(OD)],
         bounds=(lower, upper),
         maxfev=10000
     )
@@ -199,27 +199,30 @@ def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None)
     fig.patch.set_facecolor("#f9f9f7")
     ax.set_facecolor("#ffffff")
 
+    # X = concentration, Y = OD (matches kit standard curve orientation)
     x_vals = np.linspace(np.min(concentration), np.max(concentration), 500)
     y_vals = four_param_logistic(x_vals, A, B, C, D)
 
-    ax.plot(y_vals, x_vals, color="#1a1a1a", linewidth=2, label="Fitted 4PL Curve", zorder=2)
-    ax.scatter(OD, concentration, color="#e03e3e", s=65, zorder=3,
+    ax.plot(x_vals, y_vals, color="#1a1a1a", linewidth=2, label="Fitted 4PL Curve", zorder=2)
+    ax.scatter(concentration, OD, color="#e03e3e", s=65, zorder=3,
                label="Standard Points", edgecolors="#fff", linewidths=0.5)
 
     if OD_sample is not None and conc_sample is not None:
-        ax.scatter([OD_sample], [conc_sample], color="#2e55e2", s=100, zorder=4,
-                   marker="D", label=f"Sample  ({OD_sample:.3f} → {conc_sample:.2f})",
+        ax.scatter([conc_sample], [OD_sample], color="#2e55e2", s=100, zorder=4,
+                   marker="D", label=f"Sample  (OD {OD_sample:.3f} → {conc_sample:.2f})",
                    edgecolors="#fff", linewidths=0.7)
-        ax.axhline(conc_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
-        ax.axvline(OD_sample,   color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
+        # Horizontal line from Y-axis to sample point (OD level)
+        ax.axhline(OD_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
+        # Vertical line from sample point down to X-axis (concentration)
+        ax.axvline(conc_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
 
     for spine in ax.spines.values():
         spine.set_edgecolor("#e8e8e4")
     ax.tick_params(colors="#aaa", labelsize=8)
     ax.xaxis.label.set_color("#888")
     ax.yaxis.label.set_color("#888")
-    ax.set_xlabel("OD", fontsize=9, fontfamily="monospace")
-    ax.set_ylabel("Concentration", fontsize=9, fontfamily="monospace")
+    ax.set_xlabel("Standards Concentration (X)", fontsize=9, fontfamily="monospace")
+    ax.set_ylabel("O.D. (Y)", fontsize=9, fontfamily="monospace")
     ax.set_title("4PL Model Fitting", color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
     ax.grid(True, linestyle=":", linewidth=0.5, color="#e8e8e4", alpha=0.9)
@@ -280,13 +283,13 @@ with left:
     # ── BULK MODE
     if st.session_state.input_mode == "bulk":
         conc_raw = st.text_input(
-            "Concentration values (comma-separated)",
-            placeholder="e.g. 0, 5, 10, 20, 40, 80",
+            "Standard concentrations (comma-separated)",
+            placeholder="e.g. 0, 2, 4, 8, 16, 32",
             key="conc_input"
         )
         od_raw = st.text_input(
-            "OD values (comma-separated)",
-            placeholder="e.g. 0.05, 0.12, 0.25, 0.48, 0.79, 1.1",
+            "O.D. values (comma-separated)",
+            placeholder="e.g. 0.05, 0.68, 1.21, 1.95, 2.28, 2.89",
             key="od_input"
         )
         if conc_raw and od_raw:
@@ -384,6 +387,13 @@ with left:
                 elif np.any(conc < 0):
                     st.error("Concentration values must be non-negative.")
                 else:
+                    # Subtract zero standard OD (OD at concentration=0) from all OD values
+                    zero_mask = conc == 0
+                    if np.any(zero_mask):
+                        zero_od = np.mean(od[zero_mask])
+                        od = od - zero_od
+                        st.info(f"Zero standard OD ({zero_od:.4f}) subtracted from all OD values.")
+
                     # Warn about duplicates but still allow fitting
                     dupes = check_duplicates(conc.tolist())
                     if dupes:
@@ -432,7 +442,7 @@ with left:
     st.markdown('<div class="section-head">Sample Calculation</div>', unsafe_allow_html=True)
 
     sample_od = st.number_input(
-        "Sample OD value",
+        "Sample O.D. avalue",
         min_value=0.0, step=0.001, format="%.4f",
         disabled=not st.session_state.model_ready,
         key="sample_od"
@@ -448,6 +458,7 @@ with left:
             conc_val = inverse_four_param_logistic(sample_od, A, B, C, D)
             od_min = float(np.min(st.session_state.OD))
             od_max = float(np.max(st.session_state.OD))
+            # Sample OD should be within the range of standard OD values
             extrapolated = sample_od < od_min or sample_od > od_max
             st.session_state.last_od          = sample_od
             st.session_state.last_conc        = conc_val
@@ -471,7 +482,7 @@ with left:
         st.markdown(f"""
         <div class="result-box" style="border-left-color:{border_color}">
             <div class="od-label">RESULT</div>
-            <span class="od-val">OD {st.session_state.last_od:.4f}</span>
+            <span class="od-val">O.D. {st.session_state.last_od:.4f}</span>
             <span class="arrow">→</span>
             <span class="conc-val">{st.session_state.last_conc:.4f}</span>
             <span style="color:#aaa; font-size:0.75rem;"> conc</span>
