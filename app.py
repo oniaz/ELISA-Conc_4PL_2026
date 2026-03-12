@@ -19,13 +19,6 @@ st.markdown("""
 
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
-    background-color: #f9f9f7 !important;
-    color: #1a1a1a;
-}
-
-/* Kill Streamlit's default dark bg */
-.stApp, section[data-testid="stSidebar"], .main, .block-container {
-    background-color: #f9f9f7 !important;
 }
 
 /* Title */
@@ -33,11 +26,11 @@ html, body, [class*="css"] {
     border-left: 3px solid var(--text-color, currentColor);
     padding: 6px 0 6px 16px;
     margin-bottom: 28px;
+    opacity: 0.95;
 }
 .title-block-h1 {
     font-family: 'DM Mono', monospace;
     font-size: 1.4rem;
-    color: #1a1a1a;
     margin: 0;
     letter-spacing: 1px;
     font-weight: 500;
@@ -45,7 +38,7 @@ html, body, [class*="css"] {
 .title-block p {
     font-family: 'DM Mono', monospace;
     font-size: 0.7rem;
-    color: #999;
+    opacity: 0.5;
     margin: 4px 0 0 0;
     letter-spacing: 0.5px;
 }
@@ -166,22 +159,17 @@ def four_param_logistic(x, A, B, C, D):
     return D + (A - D) / (1 + (x / C)**B)
 
 def inverse_four_param_logistic(OD, A, B, C, D):
-    # Edge case: corrected OD of 0 means concentration is 0
-    if abs(OD) < 1e-9:
-        return 0.0
     numerator = (A - OD) / (OD - D)
-    if numerator <= 0:
-        raise ValueError("OD_OUT_OF_RANGE")
     return C * (numerator ** (1 / B))
 
 def fit_model(concentration, OD):
-    # Fit OD = f(concentration): concentration is X, OD is Y
-    # Bounds: B > 0 (positive slope); C > 0 (EC50 must be positive)
-    lower = [-np.inf, 1e-6,  1e-9, -np.inf]
-    upper = [ np.inf, np.inf, np.inf,  np.inf]
+    # A = bottom asymptote (≤ 0 after zero subtraction), D = top asymptote (≥ 0)
+    # B > 0 (positive slope), C > 0 (EC50 must be positive)
+    lower = [-np.inf, 1e-6,  1e-9,    0.0]
+    upper = [   0.0, np.inf, np.inf, np.inf]
     params, covariance = opt.curve_fit(
         four_param_logistic, concentration, OD,
-        p0=[min(OD), 1.0, np.median(concentration[concentration > 0] if np.any(concentration > 0) else concentration), max(OD)],
+        p0=[min(OD), 1.0, np.median(concentration), max(OD)],
         bounds=(lower, upper),
         maxfev=10000
     )
@@ -201,11 +189,15 @@ def check_duplicates(concentration):
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
 def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None):
+    """
+    Plot per manual: X-axis = concentration, Y-axis = OD (corrected if applicable).
+    OD and concentration arrays passed in are already corrected (zero-subtracted if applicable).
+    """
     fig, ax = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor("#f9f9f7")
     ax.set_facecolor("#ffffff")
 
-    # X = concentration, Y = OD (matches kit standard curve orientation)
+    # Curve: x = concentration, y = OD
     x_vals = np.linspace(np.min(concentration), np.max(concentration), 500)
     y_vals = four_param_logistic(x_vals, A, B, C, D)
 
@@ -217,9 +209,8 @@ def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None)
         ax.scatter([conc_sample], [OD_sample], color="#2e55e2", s=100, zorder=4,
                    marker="D", label=f"Sample  (OD {OD_sample:.3f} → {conc_sample:.2f})",
                    edgecolors="#fff", linewidths=0.7)
-        # Horizontal line from Y-axis to sample point (OD level)
-        ax.axhline(OD_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
-        # Vertical line from sample point down to X-axis (concentration)
+        # Dashed lines: horizontal from Y-axis to curve, then vertical down to X-axis
+        ax.axhline(OD_sample,   color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
         ax.axvline(conc_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
 
     for spine in ax.spines.values():
@@ -227,9 +218,9 @@ def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None)
     ax.tick_params(colors="#aaa", labelsize=8)
     ax.xaxis.label.set_color("#888")
     ax.yaxis.label.set_color("#888")
-    ax.set_xlabel("Standards Concentration (X)", fontsize=9, fontfamily="monospace")
-    ax.set_ylabel("O.D. (Y)", fontsize=9, fontfamily="monospace")
-    ax.set_title("4PL Model Fitting", color="#1a1a1a", fontsize=11,
+    ax.set_xlabel("Concentration", fontsize=9, fontfamily="monospace")
+    ax.set_ylabel("OD (450 nm)", fontsize=9, fontfamily="monospace")
+    ax.set_title("4PL Standard Curve", color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
     ax.grid(True, linestyle=":", linewidth=0.5, color="#e8e8e4", alpha=0.9)
     legend = ax.legend(fontsize=8, facecolor="#fff", edgecolor="#e8e8e4",
@@ -245,16 +236,17 @@ for key, val in {
     "r2": None,
     "results": [],
     "last_od": None,
-    "last_raw_od": None,
+    "last_od_raw": None,
     "last_conc": None,
     "last_extrapolated": False,
+    "last_below_lod": False,
+    "zero_od": 0.0,
+    "has_zero_standard": False,
     "input_mode": "bulk",
     "conc_list": [],
     "od_list": [],
     "new_conc_val": "",
     "fit_count": 0,
-    "zero_od": 0.0,
-    "zero_od": 0.0,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -262,8 +254,8 @@ for key, val in {
 # ── Title ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="title-block">
-  <div class="title-block-h1">◈ 4PL MODEL FITTING</div>
-  <p>Four-Parameter Logistic Regression · Standard Curve Analysis</p>
+  <div class="title-block-h1">4PL MODEL FITTING</div>
+  <p>ELISA Standard Curve Analysis · Four-Parameter Logistic Regression</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -292,13 +284,13 @@ with left:
     # ── BULK MODE
     if st.session_state.input_mode == "bulk":
         conc_raw = st.text_input(
-            "Standard concentrations (comma-separated)",
-            placeholder="e.g. 0, 2, 4, 8, 16, 32",
+            "Concentration values (comma-separated)",
+            placeholder="e.g. 0, 5, 10, 20, 40, 80",
             key="conc_input"
         )
         od_raw = st.text_input(
-            "O.D. values (comma-separated)",
-            placeholder="e.g. 0.05, 0.68, 1.21, 1.95, 2.28, 2.89",
+            "OD values (comma-separated)",
+            placeholder="e.g. 0.05, 0.12, 0.25, 0.48, 0.79, 1.1",
             key="od_input"
         )
         if conc_raw and od_raw:
@@ -396,30 +388,33 @@ with left:
                 elif np.any(conc < 0):
                     st.error("Concentration values must be non-negative.")
                 else:
-                    # Subtract zero standard OD (OD at concentration=0) from all OD values
-                    zero_mask = conc == 0
-                    if np.any(zero_mask):
-                        zero_od = float(np.mean(od[zero_mask]))
-                        od = od - zero_od
-                        st.session_state.zero_od = zero_od
-                        st.info(f"Zero standard OD ({zero_od:.4f}) will be auto-subtracted from your sample ODs.")
-                    else:
-                        st.session_state.zero_od = 0.0
-
                     # Warn about duplicates but still allow fitting
                     dupes = check_duplicates(conc.tolist())
                     if dupes:
                         st.warning(f"Duplicate concentration values detected: {dupes}. This may affect fit quality.")
-                    (A, B, C, D), cov = fit_model(conc, od)
-                    r2 = compute_r2(conc, od, A, B, C, D)
+
+                    # Zero-standard subtraction: only when a 0-concentration standard is present
+                    zero_mask = conc == 0
+                    if zero_mask.any():
+                        zero_od = float(np.mean(od[zero_mask]))
+                        od_corrected = od - zero_od
+                        st.info(f"Zero standard detected (mean OD = {zero_od:.4f}). "
+                                f"Subtracting from all OD values before fitting.")
+                    else:
+                        zero_od = 0.0
+                        od_corrected = od  # no subtraction
+
+                    (A, B, C, D), cov = fit_model(conc, od_corrected)
+                    r2 = compute_r2(conc, od_corrected, A, B, C, D)
                     st.session_state.update({
                         "model_ready": True,
                         "A": A, "B": B, "C": C, "D": D,
                         "r2": r2,
                         "concentration": conc,
-                        "OD": od,
+                        "OD": od_corrected,
+                        "zero_od": zero_od,
+                        "has_zero_standard": bool(zero_mask.any()),
                         "last_od": None,
-    "last_raw_od": None,
                         "last_conc": None,
                         "last_extrapolated": False,
                         "fit_count": st.session_state.fit_count + 1,
@@ -455,7 +450,7 @@ with left:
     st.markdown('<div class="section-head">Sample Calculation</div>', unsafe_allow_html=True)
 
     sample_od = st.number_input(
-        "Sample O.D. avalue",
+        "Sample OD value",
         min_value=0.0, step=0.001, format="%.4f",
         disabled=not st.session_state.model_ready,
         key="sample_od"
@@ -468,44 +463,102 @@ with left:
     if calc_clicked:
         try:
             A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
-            corrected_od = sample_od - st.session_state.get("zero_od", 0.0)
-            conc_val = inverse_four_param_logistic(corrected_od, A, B, C, D)
-            od_min = float(np.min(st.session_state.OD))
-            od_max = float(np.max(st.session_state.OD))
-            # Sample OD should be within the range of standard OD values
-            extrapolated = corrected_od < od_min or corrected_od > od_max
-            st.session_state.last_od          = corrected_od
-            st.session_state.last_raw_od       = sample_od
-            st.session_state.last_conc        = conc_val
+            zero_od = st.session_state.get("zero_od", 0.0)
+            has_zero = st.session_state.get("has_zero_standard", False)
+
+            # Subtract zero standard if applicable
+            od_corrected = sample_od - zero_od if has_zero else sample_od
+
+            # If corrected OD ≤ 0 and we have a zero standard, the sample is at or
+            # below the zero standard — concentration is 0, no need to invert the curve.
+            if has_zero and od_corrected <= 0:
+                # Only a true zero if the raw OD is essentially the zero standard itself.
+                # A small negative corrected OD is just noise around the blank — below LOD.
+                if abs(od_corrected) < 1e-4:
+                    conc_val = 0.0
+                    extrapolated = False
+                    below_lod = False
+                else:
+                    conc_val = None
+                    extrapolated = False
+                    below_lod = True
+            else:
+                od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
+                od_max = float(np.max(st.session_state.OD))
+                # Corrected OD is positive but below the lowest standard on the curve
+                if od_corrected < od_min:
+                    conc_val = None  # flagged as below detection limit
+                    extrapolated = False
+                    below_lod = True
+                else:
+                    conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
+                    extrapolated = od_corrected > od_max
+                    below_lod = False
+                    # OD above top asymptote makes numerator negative → nan
+                    if np.isnan(conc_val):
+                        conc_val = None
+                        extrapolated = True
+            st.session_state.last_od           = od_corrected
+            st.session_state.last_od_raw       = sample_od
+            st.session_state.last_conc         = conc_val
             st.session_state.last_extrapolated = extrapolated
-            flag = " ⚠ extrapolated" if extrapolated else ""
+            st.session_state.last_below_lod    = below_lod
             st.session_state.results.append({
                 "Model Fit #": st.session_state.fit_count,
-                "OD (raw)": round(sample_od, 4),
-                "OD (corrected)": round(corrected_od, 4),
-                "Concentration": round(conc_val, 4),
-                "Note": "extrapolated" if extrapolated else ""
+                "Raw OD": round(sample_od, 4),
+                "Corrected OD": round(od_corrected, 4) if has_zero else "—",
+                "Concentration": "< 2 pg/ml (below LOD)" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
+                "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else "")
             })
         except ValueError as e:
             st.error(str(e))
         except Exception as e:
             st.error(f"Error: {e}")
 
-    if st.session_state.last_conc is not None:
-        extrap = st.session_state.get("last_extrapolated", False)
-        border_color = "#e8a020" if extrap else "#1a1a1a"
-        extra_note = '<div style="color:#a06000;font-size:0.68rem;margin-top:6px">⚠ OD is outside standard curve range — treat with caution</div>' if extrap else ""
-        zero_od = st.session_state.get("zero_od", 0.0)
-        raw_od = st.session_state.get("last_raw_od", st.session_state.last_od)
-        correction_note = f'<div style="color:#888;font-size:0.65rem;margin-top:4px">zero-corrected: {st.session_state.last_od:.4f}</div>' if zero_od != 0.0 else ""
+    if st.session_state.last_od is not None:
+        extrap     = st.session_state.get("last_extrapolated", False)
+        below_lod  = st.session_state.get("last_below_lod", False)
+        has_zero   = st.session_state.get("has_zero_standard", False)
+        zero_od    = st.session_state.get("zero_od", 0.0)
+        raw_od     = st.session_state.get("last_od_raw", st.session_state.last_od)
+        corr_od    = st.session_state.last_od
+        conc_val   = st.session_state.last_conc
+
+        border_color = "#e8a020" if extrap else "#c0392b" if below_lod else "#1a1a1a"
+
+        if below_lod:
+            extra_note = '<div style="color:#c0392b;font-size:0.68rem;margin-top:6px">⚠ OD is below the lowest standard — concentration is below the detection limit (sensitivity: 2 pg/ml)</div>'
+        elif extrap:
+            extra_note = '<div style="color:#a06000;font-size:0.68rem;margin-top:6px">⚠ OD is outside standard curve range — treat with caution</div>'
+        else:
+            extra_note = ""
+
+        if has_zero:
+            od_display = (
+                f'<span class="od-val">OD {raw_od:.4f}</span>'
+                f'<span style="color:#aaa;font-size:0.75rem;"> − {zero_od:.4f} (zero std) = </span>'
+                f'<span class="od-val">{corr_od:.4f}</span>'
+            )
+        else:
+            od_display = f'<span class="od-val">OD {raw_od:.4f}</span>'
+
+        conc_display = (
+            '<span class="conc-val" style="color:#c0392b">&lt; 2 pg/ml</span>'
+            '<span style="color:#aaa; font-size:0.75rem;"> (below LOD)</span>'
+        ) if below_lod else (
+            '<span class="conc-val" style="color:#a06000">&gt; curve max</span>'
+            '<span style="color:#aaa; font-size:0.75rem;"> (cannot extrapolate)</span>'
+        ) if extrap and conc_val is None else (
+            f'<span class="conc-val">{conc_val:.4f}</span>'
+            '<span style="color:#aaa; font-size:0.75rem;"> conc</span>'
+        )
+
         st.markdown(f"""
         <div class="result-box" style="border-left-color:{border_color}">
             <div class="od-label">RESULT</div>
-            <span class="od-val">O.D. {raw_od:.4f}</span>
+            {od_display}
             <span class="arrow">→</span>
-            <span class="conc-val">{st.session_state.last_conc:.4f}</span>
-            <span style="color:#aaa; font-size:0.75rem;"> conc</span>
-            {correction_note}
+            {conc_display}
             {extra_note}
         </div>
         """, unsafe_allow_html=True)
