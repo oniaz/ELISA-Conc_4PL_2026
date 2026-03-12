@@ -149,6 +149,17 @@ div[data-testid="stDataFrame"] {
 /* Divider */
 hr { border-color: rgba(128,128,128,0.2) !important; margin: 20px 0 !important; }
 </style>
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-V6593BYP4X"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-V6593BYP4X');
+</script>
+
 """, unsafe_allow_html=True)
 
 # ── Math ──────────────────────────────────────────────────────────────────────
