@@ -19,25 +19,18 @@ st.markdown("""
 
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
-    background-color: #f9f9f7 !important;
-    color: #1a1a1a;
-}
-
-/* Kill Streamlit's default dark bg */
-.stApp, section[data-testid="stSidebar"], .main, .block-container {
-    background-color: #f9f9f7 !important;
 }
 
 /* Title */
 .title-block {
-    border-left: 3px solid #1a1a1a;
+    border-left: 3px solid var(--text-color, currentColor);
     padding: 6px 0 6px 16px;
     margin-bottom: 28px;
+    opacity: 0.95;
 }
 .title-block-h1 {
     font-family: 'DM Mono', monospace;
     font-size: 1.4rem;
-    color: #1a1a1a;
     margin: 0;
     letter-spacing: 1px;
     font-weight: 500;
@@ -45,7 +38,7 @@ html, body, [class*="css"] {
 .title-block p {
     font-family: 'DM Mono', monospace;
     font-size: 0.7rem;
-    color: #999;
+    opacity: 0.5;
     margin: 4px 0 0 0;
     letter-spacing: 0.5px;
 }
@@ -55,14 +48,14 @@ html, body, [class*="css"] {
     font-family: 'DM Mono', monospace;
     font-size: 0.6rem;
     letter-spacing: 3px;
-    color: #aaa;
+    opacity: 0.4;
     text-transform: uppercase;
     margin-bottom: 10px;
     padding-bottom: 5px;
-    border-bottom: 1px solid #e8e8e4;
+    border-bottom: 1px solid rgba(128,128,128,0.2);
 }
 
-/* Param cards */
+/* Param cards — theme-aware */
 .param-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -70,45 +63,44 @@ html, body, [class*="css"] {
     margin-bottom: 18px;
 }
 .param-card {
-    background: #fff;
-    border: 1px solid #e8e8e4;
+    background: rgba(128,128,128,0.07);
+    border: 1px solid rgba(128,128,128,0.15);
     border-radius: 6px;
     padding: 10px 14px;
 }
 .param-card .label {
     font-family: 'DM Mono', monospace;
     font-size: 0.6rem;
-    color: #aaa;
+    opacity: 0.45;
     letter-spacing: 0.5px;
 }
 .param-card .value {
     font-family: 'DM Mono', monospace;
     font-size: 1.05rem;
-    color: #1a1a1a;
     font-weight: 500;
 }
 
-/* Result highlight */
+/* Result highlight — theme-aware */
 .result-box {
-    background: #fff;
-    border: 1px solid #e8e8e4;
-    border-left: 3px solid #1a1a1a;
+    background: rgba(128,128,128,0.07);
+    border: 1px solid rgba(128,128,128,0.15);
+    border-left: 3px solid rgba(128,128,128,0.5);
     border-radius: 6px;
     padding: 14px 18px;
     margin: 14px 0;
     font-family: 'DM Mono', monospace;
 }
-.result-box .od-label { color: #aaa; font-size: 0.7rem; }
-.result-box .od-val   { color: #1a1a1a; font-size: 1rem; }
-.result-box .arrow    { color: #888; font-size: 1rem; margin: 0 8px; }
-.result-box .conc-val { color: #1a1a1a; font-size: 1.2rem; font-weight: 600; }
+.result-box .od-label { font-size: 0.7rem; opacity: 0.45; }
+.result-box .od-val   { font-size: 1rem; }
+.result-box .arrow    { opacity: 0.4; font-size: 1rem; margin: 0 8px; }
+.result-box .conc-val { font-size: 1.2rem; font-weight: 600; }
 
 /* Status pills */
 .pill-success {
     display: inline-block;
-    background: #f0faf5;
+    background: rgba(45,122,85,0.1);
     color: #2d7a55;
-    border: 1px solid #b3dfc7;
+    border: 1px solid rgba(45,122,85,0.3);
     border-radius: 4px;
     padding: 3px 12px;
     font-family: 'DM Mono', monospace;
@@ -117,39 +109,26 @@ html, body, [class*="css"] {
 }
 .pill-warn {
     display: inline-block;
-    background: #fffbf0;
+    background: rgba(160,96,0,0.1);
     color: #a06000;
-    border: 1px solid #f0d080;
+    border: 1px solid rgba(160,96,0,0.3);
     border-radius: 4px;
     padding: 3px 12px;
     font-family: 'DM Mono', monospace;
     font-size: 0.7rem;
 }
 
-/* Streamlit widget overrides */
+/* Inputs — font only, let Streamlit handle colors */
 input, textarea {
-    background-color: #ffffff !important;
-    border: 1px solid #ddddd8 !important;
-    color: #1a1a1a !important;
     font-family: 'DM Mono', monospace !important;
     border-radius: 5px !important;
 }
-input:focus, textarea:focus {
-    border-color: #1a1a1a !important;
-    box-shadow: 0 0 0 1px #1a1a1a !important;
-}
 div[data-testid="stTextInput"] input,
 div[data-testid="stNumberInput"] input {
-    background-color: #ffffff !important;
-    border: 1px solid #ddddd8 !important;
-    color: #1a1a1a !important;
+    font-family: 'DM Mono', monospace !important;
+    border-radius: 5px !important;
 }
-div[data-testid="stTextInput"] input:focus,
-div[data-testid="stNumberInput"] input:focus {
-    border-color: #1a1a1a !important;
-    box-shadow: 0 0 0 1px #1a1a1a !important;
-}
-label { color: #888 !important; font-size: 0.75rem !important; letter-spacing: 0.3px; }
+label { font-size: 0.75rem !important; letter-spacing: 0.3px; }
 
 /* Buttons */
 div[data-testid="stButton"] button {
@@ -162,13 +141,13 @@ div[data-testid="stButton"] button {
 
 /* Dataframe */
 div[data-testid="stDataFrame"] {
-    border: 1px solid #e8e8e4;
+    border: 1px solid rgba(128,128,128,0.2);
     border-radius: 6px;
     overflow: hidden;
 }
 
 /* Divider */
-hr { border-color: #e8e8e4 !important; margin: 20px 0 !important; }
+hr { border-color: rgba(128,128,128,0.2) !important; margin: 20px 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
