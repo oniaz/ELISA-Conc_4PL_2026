@@ -4,21 +4,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import streamlit as st
 import pandas as pd
-import streamlit_analytics2 as streamlit_analytics
-import json
-import tempfile
-
-# Write firebase credentials to a temp file
-firebase_creds = dict(st.secrets["firebase"])
-with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-    json.dump(firebase_creds, f)
-    firebase_key_path = f.name
-
-streamlit_analytics.start_tracking(
-    firestore_key_file=firebase_key_path,
-    firestore_collection_name="analytics",
-    unsafe_password=st.secrets["analytics_password"]
-)
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -164,7 +149,6 @@ div[data-testid="stDataFrame"] {
 /* Divider */
 hr { border-color: rgba(128,128,128,0.2) !important; margin: 20px 0 !important; }
 </style>
-
 """, unsafe_allow_html=True)
 
 # ── Math ──────────────────────────────────────────────────────────────────────
@@ -541,5 +525,3 @@ st.markdown("""
     built by Omnia Abouhaikal &nbsp;·&nbsp; @oniaz
 </div>
 """, unsafe_allow_html=True)
-
-streamlit_analytics.stop_tracking()
