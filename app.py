@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import streamlit as st
 import pandas as pd
+import streamlit_analytics2 as streamlit_analytics
 
+streamlit_analytics.start_tracking()
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="ELISA 4PL Fitting",
@@ -536,3 +538,5 @@ st.markdown("""
     built by Omnia Abouhaikal &nbsp;·&nbsp; @oniaz
 </div>
 """, unsafe_allow_html=True)
+
+streamlit_analytics.stop_tracking()
