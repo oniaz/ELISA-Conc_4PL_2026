@@ -219,7 +219,7 @@ def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None)
     ax.xaxis.label.set_color("#888")
     ax.yaxis.label.set_color("#888")
     ax.set_xlabel("Concentration", fontsize=9, fontfamily="monospace")
-    ax.set_ylabel("OD (450 nm)", fontsize=9, fontfamily="monospace")
+    ax.set_ylabel("OD", fontsize=9, fontfamily="monospace")
     ax.set_title("4PL Standard Curve", color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
     ax.grid(True, linestyle=":", linewidth=0.5, color="#e8e8e4", alpha=0.9)
