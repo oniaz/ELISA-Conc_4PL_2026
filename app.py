@@ -609,6 +609,6 @@ with right:
 st.markdown("""
 <div style="font-family:'DM Mono',monospace; font-size:0.7rem; color:#ccc;
             text-align:center; padding: 24px 0 8px 0;">
-    built by Omnia Abouhaikal &nbsp;·&nbsp; @oniaz
+    &copy;oniaz
 </div>
 """, unsafe_allow_html=True)
