@@ -192,6 +192,59 @@ def check_duplicates(concentration):
         seen[c] = seen.get(c, 0) + 1
     return [c for c, count in seen.items() if count > 1]
 
+# ── File import/export for standard curve data ────────────────────────────────
+def parse_standard_csv(uploaded_file):
+    """
+    Parse an uploaded standard-curve CSV into (concentration_list, od_list, error).
+    Expects two columns named 'concentration' and 'od' (case-insensitive). Falls
+    back to a plain two-column, no-header file if those names aren't found.
+    """
+    try:
+        uploaded_file.seek(0)
+        df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        return None, None, f"Couldn't read the file as a CSV: {e}"
+
+    cols_lower = [str(c).strip().lower() for c in df.columns]
+
+    if "concentration" in cols_lower and "od" in cols_lower:
+        conc_col = df.columns[cols_lower.index("concentration")]
+        od_col   = df.columns[cols_lower.index("od")]
+    elif df.shape[1] == 2:
+        # No 'concentration'/'od' header found — check whether the "header" row
+        # is actually numeric, meaning the file has no header row at all.
+        try:
+            float(df.columns[0])
+            float(df.columns[1])
+        except (ValueError, TypeError):
+            return None, None, (
+                "Found 2 columns but no 'concentration'/'od' header. "
+                "Use a CSV with a header row, e.g.:\nconcentration,od\n0,0.05\n10,0.18"
+            )
+        uploaded_file.seek(0)
+        df = pd.read_csv(uploaded_file, header=None, names=["concentration", "od"])
+        conc_col, od_col = "concentration", "od"
+    else:
+        return None, None, f"Expected exactly 2 columns (concentration, od) but found {df.shape[1]}."
+
+    try:
+        conc_vals = [float(v) for v in df[conc_col]]
+        od_vals   = [float(v) for v in df[od_col]]
+    except (ValueError, TypeError) as e:
+        return None, None, f"Non-numeric value found in the file: {e}"
+
+    if len(conc_vals) < 2:
+        return None, None, "File needs at least 2 data rows."
+    if len(conc_vals) != len(od_vals):
+        return None, None, "Concentration and OD columns have different lengths."
+
+    return conc_vals, od_vals, None
+
+def build_standard_csv(concentration, od):
+    """Serialize entered standard-curve points to CSV bytes for export."""
+    df = pd.DataFrame({"concentration": concentration, "od": od})
+    return df.to_csv(index=False).encode()
+
 # ── Plot ───────────────────────────────────────────────────────────────────────
 def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None):
     """
@@ -276,12 +329,17 @@ with left:
     # Mode toggle
     mode = st.radio(
         "Input mode",
-        ["Bulk (comma-separated)", "One by one"],
+        ["Bulk (comma-separated)", "One by one", "Import file"],
         horizontal=True,
         key="input_mode_radio",
         label_visibility="collapsed"
     )
-    st.session_state.input_mode = "bulk" if mode == "Bulk (comma-separated)" else "onebyone"
+    if mode == "Bulk (comma-separated)":
+        st.session_state.input_mode = "bulk"
+    elif mode == "One by one":
+        st.session_state.input_mode = "onebyone"
+    else:
+        st.session_state.input_mode = "import"
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -317,7 +375,7 @@ with left:
                 st.error(bulk_parse_error)
 
     # ── ONE-BY-ONE MODE
-    else:
+    elif st.session_state.input_mode == "onebyone":
         # Start with one pair if empty
         if not st.session_state.conc_list:
             st.session_state.conc_list = [None]
@@ -402,6 +460,46 @@ with left:
             st.session_state.row_ids   = [st.session_state.next_row_id]
             st.session_state.next_row_id += 1
             st.rerun()
+
+    # ── IMPORT MODE
+    elif st.session_state.input_mode == "import":
+        uploaded_csv = st.file_uploader(
+            "Standard curve CSV",
+            type=["csv"],
+            key="standard_csv_upload",
+            help=(
+                "CSV with two columns, **concentration** and **od**, one standard "
+                "point per row. Example:\n\n"
+                "concentration,od\n0,0.05\n10,0.18\n20,0.35\n40,0.62\n80,0.95\n\n"
+                "A header row is preferred, but a plain two-column file without "
+                "one also works. This is the same format produced by "
+                "'Export data as CSV' below."
+            ),
+        )
+        if uploaded_csv is not None:
+            conc_parsed, od_parsed, parse_err = parse_standard_csv(uploaded_csv)
+            if parse_err:
+                st.error(parse_err)
+            else:
+                conc_final = conc_parsed
+                od_final   = od_parsed
+                st.success(f"Loaded {len(conc_final)} standard points from file.")
+                st.dataframe(
+                    pd.DataFrame({"concentration": conc_final, "od": od_final}),
+                    use_container_width=True, hide_index=True
+                )
+
+    # ── Export current standard curve data (shared across all input modes)
+    if conc_final and od_final and len(conc_final) == len(od_final) and len(conc_final) >= 2:
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        st.download_button(
+            "⬇  Export data as CSV",
+            build_standard_csv(conc_final, od_final),
+            "standard_curve_data.csv",
+            "text/csv",
+            use_container_width=True,
+            help="Save these concentration/OD points so you can re-import them later instead of retyping."
+        )
 
     # ── Fit button (shared)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)

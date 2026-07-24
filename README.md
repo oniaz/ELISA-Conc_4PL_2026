@@ -56,7 +56,7 @@ streamlit run app.py
 
 ### Entering standard curve data
 
-You have two input modes:
+You have three input modes:
 
 **Bulk** — paste all values comma-separated:
 ```
@@ -65,6 +65,28 @@ OD:            0.05, 0.18, 0.35, 0.62, 0.95, 1.28
 ```
 
 **One by one** — add each concentration/OD pair individually using the `+ Add another point` button. Good for entering values directly from your plate reader as you go.
+
+**Import file** — upload a CSV with `concentration` and `od` columns to skip retyping data you've entered before. See [Import/Export](#importexport-standard-curve-data) below.
+
+### Import/Export standard curve data
+
+Once you've typed in a standard curve (via Bulk or One by one), click **⬇ Export data as CSV** to save it. That file can later be re-loaded via the **Import file** mode, so you don't have to retype the same standards every session.
+
+Expected file shape — two columns, `concentration` and `od`, one standard point per row:
+
+```
+concentration,od
+0,0.05
+10,0.18
+20,0.35
+40,0.62
+80,0.95
+160,1.28
+```
+
+A header row is preferred, but a plain two-column file without one is also accepted. Hover the **?** next to the file upload field in the app for a reminder of this format.
+
+Note: this only imports/exports the standard curve *inputs* (concentration/OD pairs) — not fitted parameters or the sample results history. Use **⬇ Export CSV** in Results History to export calculated sample results.
 
 ### Fitting the model
 
