@@ -159,7 +159,12 @@ def four_param_logistic(x, A, B, C, D):
     return D + (A - D) / (1 + (x / C)**B)
 
 def inverse_four_param_logistic(OD, A, B, C, D):
-    numerator = (A - OD) / (OD - D)
+    denom = OD - D
+    if denom == 0:
+        return np.nan  # OD sits exactly on the top asymptote — can't invert
+    numerator = (A - OD) / denom
+    if numerator < 0:
+        return np.nan  # would require a fractional power of a negative number
     return C * (numerator ** (1 / B))
 
 def fit_model(concentration, OD):
@@ -245,6 +250,8 @@ for key, val in {
     "input_mode": "bulk",
     "conc_list": [],
     "od_list": [],
+    "row_ids": [],
+    "next_row_id": 1,
     "new_conc_val": "",
     "fit_count": 0,
 }.items():
@@ -280,6 +287,7 @@ with left:
 
     conc_final = None
     od_final   = None
+    bulk_parse_error = None
 
     # ── BULK MODE
     if st.session_state.input_mode == "bulk":
@@ -296,9 +304,17 @@ with left:
         if conc_raw and od_raw:
             try:
                 conc_final = [float(v.strip()) for v in conc_raw.split(",")]
-                od_final   = [float(v.strip()) for v in od_raw.split(",")]
-            except Exception:
-                pass
+            except ValueError as e:
+                bulk_parse_error = f"Couldn't parse concentration values — {e}"
+                conc_final = None
+            try:
+                od_final = [float(v.strip()) for v in od_raw.split(",")]
+            except ValueError as e:
+                msg = f"Couldn't parse OD values — {e}"
+                bulk_parse_error = f"{bulk_parse_error} {msg}" if bulk_parse_error else msg
+                od_final = None
+            if bulk_parse_error:
+                st.error(bulk_parse_error)
 
     # ── ONE-BY-ONE MODE
     else:
@@ -306,9 +322,17 @@ with left:
         if not st.session_state.conc_list:
             st.session_state.conc_list = [None]
             st.session_state.od_list   = [None]
+            st.session_state.row_ids   = [st.session_state.next_row_id]
+            st.session_state.next_row_id += 1
+        # Safety net: keep row_ids in sync with conc_list length even if they
+        # ever drift (e.g. from an older session state shape).
+        while len(st.session_state.row_ids) < len(st.session_state.conc_list):
+            st.session_state.row_ids.append(st.session_state.next_row_id)
+            st.session_state.next_row_id += 1
 
         to_remove = None
         for i in range(len(st.session_state.conc_list)):
+            rid = st.session_state.row_ids[i]
             st.markdown(
                 f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.65rem;"
                 f"color:#aaa;letter-spacing:2px;margin-bottom:4px;margin-top:{'0' if i==0 else '14px'}'"
@@ -319,7 +343,7 @@ with left:
             with c_col:
                 c_val = st.text_input(
                     "Concentration", placeholder="e.g. 10",
-                    key=f"conc_row_{i}",
+                    key=f"conc_row_{rid}",
                     value="" if st.session_state.conc_list[i] is None else str(st.session_state.conc_list[i]),
                 )
                 if c_val.strip():
@@ -327,10 +351,12 @@ with left:
                         st.session_state.conc_list[i] = float(c_val.strip())
                     except Exception:
                         pass
+                else:
+                    st.session_state.conc_list[i] = None
             with od_col:
                 o_val = st.text_input(
                     "OD", placeholder="e.g. 0.48",
-                    key=f"od_row_{i}",
+                    key=f"od_row_{rid}",
                     value="" if st.session_state.od_list[i] is None else str(st.session_state.od_list[i]),
                 )
                 if o_val.strip():
@@ -338,21 +364,26 @@ with left:
                         st.session_state.od_list[i] = float(o_val.strip())
                     except Exception:
                         pass
+                else:
+                    st.session_state.od_list[i] = None
             with x_col:
                 st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                 if len(st.session_state.conc_list) > 1:
-                    if st.button("✕", key=f"remove_{i}"):
+                    if st.button("✕", key=f"remove_{rid}"):
                         to_remove = i
 
         if to_remove is not None:
             st.session_state.conc_list.pop(to_remove)
             st.session_state.od_list.pop(to_remove)
+            st.session_state.row_ids.pop(to_remove)
             st.rerun()
 
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         if st.button("＋  Add another point", use_container_width=True):
             st.session_state.conc_list.append(None)
             st.session_state.od_list.append(None)
+            st.session_state.row_ids.append(st.session_state.next_row_id)
+            st.session_state.next_row_id += 1
             st.rerun()
 
         # Build final arrays only if all filled
@@ -368,6 +399,8 @@ with left:
         if st.button("✕  Reset all", use_container_width=True):
             st.session_state.conc_list = [None]
             st.session_state.od_list   = [None]
+            st.session_state.row_ids   = [st.session_state.next_row_id]
+            st.session_state.next_row_id += 1
             st.rerun()
 
     # ── Fit button (shared)
@@ -376,7 +409,10 @@ with left:
 
     if fit_clicked:
         if not conc_final or not od_final:
-            st.error("Fill in all values before fitting.")
+            if st.session_state.input_mode == "bulk" and bulk_parse_error:
+                st.error("Fix the input errors above before fitting.")
+            else:
+                st.error("Fill in all values before fitting.")
         else:
             try:
                 conc = np.array(conc_final, dtype=float)
@@ -507,7 +543,7 @@ with left:
                 "Model Fit #": st.session_state.fit_count,
                 "Raw OD": round(sample_od, 4),
                 "Corrected OD": round(od_corrected, 4) if has_zero else "—",
-                "Concentration": "< 2 pg/ml (below LOD)" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
+                "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
                 "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else "")
             })
         except ValueError as e:
@@ -527,7 +563,7 @@ with left:
         border_color = "#e8a020" if extrap else "#c0392b" if below_lod else "#1a1a1a"
 
         if below_lod:
-            extra_note = '<div style="color:#c0392b;font-size:0.68rem;margin-top:6px">⚠ OD is below the lowest standard — concentration is below the detection limit (sensitivity: 2 pg/ml)</div>'
+            extra_note = '<div style="color:#c0392b;font-size:0.68rem;margin-top:6px">⚠ OD is below the lowest standard — concentration is below the limit of detection for this curve</div>'
         elif extrap:
             extra_note = '<div style="color:#a06000;font-size:0.68rem;margin-top:6px">⚠ OD is outside standard curve range — treat with caution</div>'
         else:
@@ -543,8 +579,8 @@ with left:
             od_display = f'<span class="od-val">OD {raw_od:.4f}</span>'
 
         conc_display = (
-            '<span class="conc-val" style="color:#c0392b">&lt; 2 pg/ml</span>'
-            '<span style="color:#aaa; font-size:0.75rem;"> (below LOD)</span>'
+            '<span class="conc-val" style="color:#c0392b">below LOD</span>'
+            '<span style="color:#aaa; font-size:0.75rem;"> (below lowest standard)</span>'
         ) if below_lod else (
             '<span class="conc-val" style="color:#a06000">&gt; curve max</span>'
             '<span style="color:#aaa; font-size:0.75rem;"> (cannot extrapolate)</span>'
