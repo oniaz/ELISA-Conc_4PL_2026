@@ -229,6 +229,48 @@ def compute_r2(concentration, OD, A, B, C, D):
     ss_tot = np.sum((OD - np.mean(OD)) ** 2)
     return 1 - (ss_res / ss_tot) if ss_tot != 0 else 1.0
 
+def compute_param_stderr(covariance):
+    """
+    Standard error for each of A, B, C, D from the diagonal of the covariance
+    matrix returned by curve_fit. A None entry means the fit's covariance
+    wasn't finite for that parameter — i.e. curve_fit couldn't pin it down
+    at all, which is a stronger warning sign than a merely large SE.
+    """
+    diag = np.diag(covariance)
+    stderrs = []
+    for d in diag:
+        if not np.isfinite(d) or d < 0:
+            stderrs.append(None)
+        else:
+            stderrs.append(float(np.sqrt(d)))
+    return stderrs
+
+def param_uncertainty_flag(kind, value, stderr, scale, threshold=0.5):
+    """
+    Classify a parameter's uncertainty as 'unknown' (SE couldn't be estimated),
+    'high' (poorly constrained), or 'ok'.
+
+    kind='ratio' (B, the dimensionless Hill slope): judged relative to its own
+    value, since B is never legitimately near zero.
+
+    kind='scale' (A, D — OD-scale; C — concentration-scale): judged relative to
+    the data's own OD or concentration range instead of the parameter's value.
+    This matters because A (the bottom asymptote) is *supposed* to land near
+    zero once a zero standard has been subtracted — dividing its small, healthy
+    standard error by its near-zero value would produce a huge, misleading
+    ratio even for a well-constrained fit.
+    """
+    if stderr is None:
+        return "unknown"
+    if kind == "ratio":
+        if value == 0:
+            return "high" if stderr > 1e-6 else "ok"
+        return "high" if abs(stderr / value) > threshold else "ok"
+    # kind == "scale"
+    if scale is None or scale <= 0:
+        return "unknown"
+    return "high" if stderr > threshold * scale else "ok"
+
 def check_duplicates(concentration):
     seen = {}
     for c in concentration:
@@ -348,6 +390,7 @@ for key, val in {
     "A": None, "B": None, "C": None, "D": None,
     "concentration": None, "OD": None,
     "r2": None,
+    "param_stderr": [None, None, None, None],
     "results": [],
     "last_od": None,
     "last_od_raw": None,
@@ -613,6 +656,7 @@ with left:
                     with st.spinner("Fitting 4PL model…"):
                         (A, B, C, D), cov = fit_model(conc, od_corrected)
                     r2 = compute_r2(conc, od_corrected, A, B, C, D)
+                    param_stderr = compute_param_stderr(cov)
 
                     had_prior_result = st.session_state.model_ready and (
                         st.session_state.last_od is not None or st.session_state.last_batch_points
@@ -622,6 +666,7 @@ with left:
                         "model_ready": True,
                         "A": A, "B": B, "C": C, "D": D,
                         "r2": r2,
+                        "param_stderr": param_stderr,
                         "concentration": conc,
                         "OD": od_corrected,
                         "zero_od": zero_od,
@@ -646,18 +691,54 @@ with left:
         r2 = st.session_state.r2
         r2_color = "#2d7a55" if r2 >= 0.99 else "#a06000" if r2 >= 0.95 else "#c0392b"
         r2_label = "excellent" if r2 >= 0.99 else "acceptable" if r2 >= 0.95 else "poor — check data"
+
+        stderrs = st.session_state.get("param_stderr") or [None, None, None, None]
+        param_names = ["A — Bottom asymptote", "B — Hill slope", "C — EC50 / inflection", "D — Top asymptote"]
+        param_values = [A, B, C, D]
+        od_range   = float(np.max(st.session_state.OD) - np.min(st.session_state.OD))
+        conc_range = float(np.max(st.session_state.concentration) - np.min(st.session_state.concentration))
+        param_kinds  = ["scale", "ratio", "scale", "scale"]
+        param_scales = [od_range, None, conc_range, od_range]
+        flags = [
+            param_uncertainty_flag(kind, v, se, scale)
+            for kind, v, se, scale in zip(param_kinds, param_values, stderrs, param_scales)
+        ]
+
+        cards_html = ""
+        flagged_names = []
+        for name, value, se, flag in zip(param_names, param_values, stderrs, flags):
+            if se is None:
+                se_html = '<span style="color:#c0392b;font-size:0.65rem;"> ± could not be estimated</span>'
+            else:
+                se_color = "#c0392b" if flag == "high" else "#999"
+                se_html = f'<span style="color:{se_color};font-size:0.65rem;"> ± {se:.5f}</span>'
+            border = "border-left:3px solid #c0392b;" if flag in ("high", "unknown") else ""
+            cards_html += (
+                f'<div class="param-card" style="{border}">'
+                f'<div class="label">{name}</div>'
+                f'<div class="value">{value:.5f}{se_html}</div>'
+                f'</div>'
+            )
+            if flag in ("high", "unknown"):
+                flagged_names.append(name.split(" — ")[0])
+
         st.markdown(f"""
         <div class="param-grid">
-            <div class="param-card"><div class="label">A — Bottom asymptote</div><div class="value">{A:.5f}</div></div>
-            <div class="param-card"><div class="label">B — Hill slope</div><div class="value">{B:.5f}</div></div>
-            <div class="param-card"><div class="label">C — EC50 / inflection</div><div class="value">{C:.5f}</div></div>
-            <div class="param-card"><div class="label">D — Top asymptote</div><div class="value">{D:.5f}</div></div>
+            {cards_html}
         </div>
         <div class="param-card" style="margin-bottom:10px">
             <div class="label">R² — Goodness of fit</div>
             <div class="value" style="color:{r2_color}">{r2:.6f} <span style="font-size:0.65rem;color:{r2_color}">({r2_label})</span></div>
         </div>
         """, unsafe_allow_html=True)
+
+        if flagged_names:
+            st.warning(
+                f"Parameter(s) {', '.join(flagged_names)} are poorly constrained by this data "
+                f"(large or non-estimable standard error) even though R² may look fine — R² measures "
+                f"how well the curve fits the standard points, not how reliable each parameter is. "
+                f"Consider adding more standards, especially near the low/high ends of the curve."
+            )
 
     st.markdown("---")
 

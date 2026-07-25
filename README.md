@@ -93,7 +93,7 @@ Note: this only imports/exports the standard curve *inputs* (concentration/OD pa
 Click **▶ FIT MODEL**. The app will:
 - Validate your inputs (minimum 4 points, no negative concentrations)
 - Warn you about duplicate concentration values
-- Display the fitted curve and parameters A, B, C, D
+- Display the fitted curve and parameters A, B, C, D, each with its standard error (± SE)
 - Show R² with a color-coded quality indicator
 
 | R² | Quality |
@@ -101,6 +101,8 @@ Click **▶ FIT MODEL**. The app will:
 | ≥ 0.99 | Excellent ✓ |
 | ≥ 0.95 | Acceptable |
 | < 0.95 | Poor — check your data |
+
+**A good R² doesn't guarantee reliable parameters.** R² only measures how well the curve passes through your standard points — it says nothing about how tightly each parameter (A, B, C, D) is actually pinned down by the data. A curve can fit visually well while one parameter (often B or C, if your standards don't bracket the inflection point) is barely constrained. If a parameter's standard error is large relative to its value, or couldn't be estimated at all, the app flags it with a red border and a warning — treat back-calculated concentrations from that fit with extra caution, and consider adding standards closer to the low/high ends of the curve.
 
 ### Calculating sample concentrations
 
