@@ -307,6 +307,8 @@ for key, val in {
     "next_row_id": 1,
     "new_conc_val": "",
     "fit_count": 0,
+    "confirm_reset_points": False,
+    "confirm_clear_results": False,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -454,12 +456,25 @@ with left:
             conc_final = st.session_state.conc_list
             od_final   = st.session_state.od_list
 
-        if st.button("✕  Reset all", use_container_width=True):
-            st.session_state.conc_list = [None]
-            st.session_state.od_list   = [None]
-            st.session_state.row_ids   = [st.session_state.next_row_id]
-            st.session_state.next_row_id += 1
-            st.rerun()
+        if st.session_state.confirm_reset_points:
+            st.warning("This clears every point you've entered. Are you sure?")
+            yes_col, no_col = st.columns(2)
+            with yes_col:
+                if st.button("✕  Yes, reset", use_container_width=True, type="primary"):
+                    st.session_state.conc_list = [None]
+                    st.session_state.od_list   = [None]
+                    st.session_state.row_ids   = [st.session_state.next_row_id]
+                    st.session_state.next_row_id += 1
+                    st.session_state.confirm_reset_points = False
+                    st.rerun()
+            with no_col:
+                if st.button("Cancel", use_container_width=True):
+                    st.session_state.confirm_reset_points = False
+                    st.rerun()
+        else:
+            if st.button("✕  Reset all", use_container_width=True):
+                st.session_state.confirm_reset_points = True
+                st.rerun()
 
     # ── IMPORT MODE
     elif st.session_state.input_mode == "import":
@@ -538,8 +553,12 @@ with left:
                         zero_od = 0.0
                         od_corrected = od  # no subtraction
 
-                    (A, B, C, D), cov = fit_model(conc, od_corrected)
+                    with st.spinner("Fitting 4PL model…"):
+                        (A, B, C, D), cov = fit_model(conc, od_corrected)
                     r2 = compute_r2(conc, od_corrected, A, B, C, D)
+
+                    had_prior_result = st.session_state.model_ready and st.session_state.last_od is not None
+
                     st.session_state.update({
                         "model_ready": True,
                         "A": A, "B": B, "C": C, "D": D,
@@ -554,6 +573,8 @@ with left:
                         "fit_count": st.session_state.fit_count + 1,
                     })
                     st.markdown('<span class="pill-success">✓ Model fitted</span>', unsafe_allow_html=True)
+                    if had_prior_result:
+                        st.info("Re-fitting cleared the previously displayed sample result — recalculate it against the new curve if you still need it.")
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -582,6 +603,9 @@ with left:
 
     # ── Sample calculation
     st.markdown('<div class="section-head">Sample Calculation</div>', unsafe_allow_html=True)
+
+    if not st.session_state.model_ready:
+        st.caption("Fit a model above to enable sample calculation.")
 
     sample_od = st.number_input(
         "Sample OD value",
@@ -742,16 +766,40 @@ with right:
         st.markdown("---")
         st.markdown('<div class="section-head">Results History</div>', unsafe_allow_html=True)
 
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            if st.button("✕  Clear", use_container_width=True):
-                st.session_state.results = []
-                st.session_state.last_od = None
-                st.session_state.last_conc = None
-                st.rerun()
+        if st.session_state.confirm_clear_results:
+            warn_col, yes_col, no_col = st.columns([3, 1, 1])
+            with warn_col:
+                st.warning("This clears all results. Are you sure?")
+            with yes_col:
+                if st.button("Yes, clear", use_container_width=True, type="primary"):
+                    st.session_state.results = []
+                    st.session_state.last_od = None
+                    st.session_state.last_conc = None
+                    st.session_state.confirm_clear_results = False
+                    st.rerun()
+            with no_col:
+                if st.button("Cancel", use_container_width=True):
+                    st.session_state.confirm_clear_results = False
+                    st.rerun()
+        else:
+            col1, col2 = st.columns([3, 1])
+            with col2:
+                if st.button("✕  Clear all", use_container_width=True):
+                    st.session_state.confirm_clear_results = True
+                    st.rerun()
 
         df = pd.DataFrame(st.session_state.results)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        selection = st.dataframe(
+            df, use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="multi-row", key="results_table"
+        )
+        selected_rows = selection.selection.rows if selection and selection.selection else []
+        if selected_rows:
+            if st.button(f"✕  Delete {len(selected_rows)} selected row(s)", use_container_width=True):
+                st.session_state.results = [
+                    r for i, r in enumerate(st.session_state.results) if i not in selected_rows
+                ]
+                st.rerun()
 
         csv = df.to_csv(index=False).encode()
         st.download_button("⬇  Export CSV", csv, "4pl_results.csv", "text/csv",
