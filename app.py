@@ -354,6 +354,7 @@ for key, val in {
     "last_conc": None,
     "last_extrapolated": False,
     "last_below_lod": False,
+    "last_batch_points": [],
     "zero_od": 0.0,
     "has_zero_standard": False,
     "input_mode": "bulk",
@@ -613,7 +614,9 @@ with left:
                         (A, B, C, D), cov = fit_model(conc, od_corrected)
                     r2 = compute_r2(conc, od_corrected, A, B, C, D)
 
-                    had_prior_result = st.session_state.model_ready and st.session_state.last_od is not None
+                    had_prior_result = st.session_state.model_ready and (
+                        st.session_state.last_od is not None or st.session_state.last_batch_points
+                    )
 
                     st.session_state.update({
                         "model_ready": True,
@@ -626,6 +629,7 @@ with left:
                         "last_od": None,
                         "last_conc": None,
                         "last_extrapolated": False,
+                        "last_batch_points": [],
                         "fit_count": st.session_state.fit_count + 1,
                     })
                     st.markdown('<span class="pill-success">✓ Model fitted</span>', unsafe_allow_html=True)
@@ -705,6 +709,7 @@ with left:
                     st.session_state.last_conc         = conc_val
                     st.session_state.last_extrapolated = extrapolated
                     st.session_state.last_below_lod    = below_lod
+                    st.session_state.last_batch_points = []  # a fresh single calc supersedes any prior batch
                     st.session_state.results.append({
                         "Model Fit #": st.session_state.fit_count,
                         "Raw OD": round(sample_od, 4),
@@ -749,6 +754,7 @@ with left:
                         od_max = float(np.max(st.session_state.OD))
 
                         n_ok = n_below = n_extrap = 0
+                        batch_points = []
                         for v in values:
                             r = calculate_sample(v, A, B, C, D, zero_od, has_zero, od_min, od_max)
                             od_corrected, conc_val = r["od_corrected"], r["conc_val"]
@@ -768,22 +774,22 @@ with left:
                                 n_extrap += 1
                             else:
                                 n_ok += 1
+                            if conc_val is not None:
+                                batch_points.append({"od": od_corrected, "conc": conc_val})
 
                         # A single "latest result" box doesn't make sense for a batch —
-                        # clear it so the summary below is what's shown instead.
+                        # clear it and instead show the whole batch as the "Latest result"
+                        # cluster on the curve, so nothing extra needs to be toggled.
                         st.session_state.last_od = None
                         st.session_state.last_conc = None
-
-                        # Switch the curve to "All results" so the batch shows up on the
-                        # graph immediately instead of leaving "Latest result" empty.
-                        st.session_state.plot_mode = "All results"
+                        st.session_state.last_batch_points = batch_points
 
                         summary = f"✓ {len(values)} sample(s) calculated — {n_ok} in range"
                         if n_below:
                             summary += f", {n_below} below LOD"
                         if n_extrap:
                             summary += f", {n_extrap} extrapolated"
-                        summary += ". Plotted on the curve — see Results History below."
+                        summary += ". Plotted on the curve below."
                         st.success(summary)
                 except ValueError as e:
                     st.error(str(e))
@@ -872,6 +878,7 @@ with right:
                     st.session_state.results = []
                     st.session_state.last_od = None
                     st.session_state.last_conc = None
+                    st.session_state.last_batch_points = []
                     st.session_state.confirm_clear_results = False
                     st.rerun()
             with no_col:
@@ -897,6 +904,7 @@ with right:
                 st.session_state.results = [
                     r for i, r in enumerate(st.session_state.results) if i not in selected_rows
                 ]
+                st.session_state.last_batch_points = []
                 st.rerun()
 
         csv = df_display.to_csv(index=False).encode()
@@ -912,7 +920,9 @@ with right:
             skipped_no_value = 0
 
             if plot_mode == "Latest result":
-                if st.session_state.last_od is not None and st.session_state.last_conc is not None:
+                if st.session_state.last_batch_points:
+                    sample_points = st.session_state.last_batch_points
+                elif st.session_state.last_od is not None and st.session_state.last_conc is not None:
                     sample_points = [{"od": st.session_state.last_od, "conc": st.session_state.last_conc}]
             else:
                 if plot_mode == "All results":
