@@ -246,10 +246,15 @@ def build_standard_csv(concentration, od):
     return df.to_csv(index=False).encode()
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
-def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None):
+def make_figure(A, B, C, D, OD, concentration, sample_points=None):
     """
     Plot per manual: X-axis = concentration, Y-axis = OD (corrected if applicable).
     OD and concentration arrays passed in are already corrected (zero-subtracted if applicable).
+
+    sample_points: optional list of {"od": float, "conc": float} dicts to plot as
+    sample markers. A single point gets dashed guide lines to the axes (the classic
+    "read the concentration off the curve" view); multiple points are shown as a
+    cluster of diamonds without guide lines to avoid clutter.
     """
     fig, ax = plt.subplots(figsize=(9, 5))
     fig.patch.set_facecolor("#f9f9f7")
@@ -263,13 +268,21 @@ def make_figure(A, B, C, D, OD, concentration, OD_sample=None, conc_sample=None)
     ax.scatter(concentration, OD, color="#e03e3e", s=65, zorder=3,
                label="Standard Points", edgecolors="#fff", linewidths=0.5)
 
-    if OD_sample is not None and conc_sample is not None:
-        ax.scatter([conc_sample], [OD_sample], color="#2e55e2", s=100, zorder=4,
-                   marker="D", label=f"Sample  (OD {OD_sample:.3f} → {conc_sample:.2f})",
+    sample_points = sample_points or []
+    if len(sample_points) == 1:
+        sp = sample_points[0]
+        ax.scatter([sp["conc"]], [sp["od"]], color="#2e55e2", s=100, zorder=4,
+                   marker="D", label=f"Sample  (OD {sp['od']:.3f} → {sp['conc']:.2f})",
                    edgecolors="#fff", linewidths=0.7)
         # Dashed lines: horizontal from Y-axis to curve, then vertical down to X-axis
-        ax.axhline(OD_sample,   color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
-        ax.axvline(conc_sample, color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
+        ax.axhline(sp["od"],   color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
+        ax.axvline(sp["conc"], color="#2d7a55", linewidth=0.8, linestyle="--", alpha=0.4)
+    elif len(sample_points) > 1:
+        xs = [sp["conc"] for sp in sample_points]
+        ys = [sp["od"] for sp in sample_points]
+        ax.scatter(xs, ys, color="#2e55e2", s=80, zorder=4, marker="D",
+                   label=f"Samples ({len(sample_points)})",
+                   edgecolors="#fff", linewidths=0.6)
 
     for spine in ax.spines.values():
         spine.set_edgecolor("#e8e8e4")
@@ -670,7 +683,9 @@ with left:
                     "Raw OD": round(sample_od, 4),
                     "Corrected OD": round(od_corrected, 4) if has_zero else "—",
                     "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
-                    "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else "")
+                    "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else ""),
+                    "_od_corrected": od_corrected,
+                    "_conc_value": conc_val,
                 })
             except ValueError as e:
                 st.error(str(e))
@@ -729,39 +744,23 @@ with right:
     # ── Graph
     st.markdown('<div class="section-head">Curve</div>', unsafe_allow_html=True)
 
-    if st.session_state.model_ready:
-        fig = make_figure(
-            st.session_state.A, st.session_state.B,
-            st.session_state.C, st.session_state.D,
-            st.session_state.OD, st.session_state.concentration,
-            st.session_state.last_od, st.session_state.last_conc
-        )
-        st.pyplot(fig, use_container_width=True)
+    plot_mode = st.radio(
+        "Points to plot on curve",
+        ["Latest result", "All results", "Selected rows"],
+        horizontal=True,
+        key="plot_mode",
+        label_visibility="collapsed",
+        help=(
+            "Latest result — only the most recently calculated sample.\n\n"
+            "All results — every calculated sample from the current fit.\n\n"
+            "Selected rows — pick specific rows in Results History below."
+        ),
+    )
+    curve_placeholder = st.empty()
 
-        img_buf = io.BytesIO()
-        fig.savefig(img_buf, format="png", dpi=200, bbox_inches="tight")
-        img_buf.seek(0)
-        st.download_button(
-            "⬇  Export curve image (PNG)",
-            img_buf,
-            f"standard_curve_fit_{st.session_state.fit_count}.png",
-            "image/png",
-            use_container_width=True,
-            help="Download the chart above as a PNG image."
-        )
-
-        plt.close(fig)
-    else:
-        st.markdown("""
-        <div style="background:#fff; border:1px dashed #ddddd8; border-radius:8px;
-                    height:320px; display:flex; align-items:center; justify-content:center;">
-            <span style="color:#bbb; font-family:'DM Mono',monospace; font-size:0.85rem;">
-                Fit a model to see the curve
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Results table
+    # ── Results table (rendered here so its selection is available for the
+    # placeholder above, filled in further down)
+    selected_rows = []
     if st.session_state.results:
         st.markdown("---")
         st.markdown('<div class="section-head">Results History</div>', unsafe_allow_html=True)
@@ -788,9 +787,10 @@ with right:
                     st.session_state.confirm_clear_results = True
                     st.rerun()
 
-        df = pd.DataFrame(st.session_state.results)
+        df_full = pd.DataFrame(st.session_state.results)
+        df_display = df_full.drop(columns=["_od_corrected", "_conc_value"], errors="ignore")
         selection = st.dataframe(
-            df, use_container_width=True, hide_index=True,
+            df_display, use_container_width=True, hide_index=True,
             on_select="rerun", selection_mode="multi-row", key="results_table"
         )
         selected_rows = selection.selection.rows if selection and selection.selection else []
@@ -801,9 +801,73 @@ with right:
                 ]
                 st.rerun()
 
-        csv = df.to_csv(index=False).encode()
+        csv = df_display.to_csv(index=False).encode()
         st.download_button("⬇  Export CSV", csv, "4pl_results.csv", "text/csv",
                            use_container_width=True)
+
+    # ── Fill in the curve now that we know the current table selection
+    with curve_placeholder.container():
+        if st.session_state.model_ready:
+            current_fit = st.session_state.fit_count
+            sample_points = []
+            skipped_other_fit = 0
+            skipped_no_value = 0
+
+            if plot_mode == "Latest result":
+                if st.session_state.last_od is not None and st.session_state.last_conc is not None:
+                    sample_points = [{"od": st.session_state.last_od, "conc": st.session_state.last_conc}]
+            else:
+                if plot_mode == "All results":
+                    candidates = st.session_state.results
+                else:  # Selected rows
+                    candidates = [st.session_state.results[i] for i in selected_rows]
+
+                for r in candidates:
+                    if r["Model Fit #"] != current_fit:
+                        skipped_other_fit += 1
+                    elif r.get("_conc_value") is None:
+                        skipped_no_value += 1
+                    else:
+                        sample_points.append({"od": r["_od_corrected"], "conc": r["_conc_value"]})
+
+                if plot_mode == "Selected rows" and not selected_rows:
+                    st.caption("Select one or more rows in Results History below to plot them here.")
+
+            fig = make_figure(
+                st.session_state.A, st.session_state.B,
+                st.session_state.C, st.session_state.D,
+                st.session_state.OD, st.session_state.concentration,
+                sample_points
+            )
+            st.pyplot(fig, use_container_width=True)
+
+            if skipped_other_fit:
+                st.caption(f"{skipped_other_fit} point(s) skipped — calculated against a previous curve fit.")
+            if skipped_no_value:
+                st.caption(f"{skipped_no_value} point(s) skipped — below LOD or above curve max, no concentration to plot.")
+
+            img_buf = io.BytesIO()
+            fig.savefig(img_buf, format="png", dpi=200, bbox_inches="tight")
+            img_buf.seek(0)
+            st.download_button(
+                "⬇  Export curve image (PNG)",
+                img_buf,
+                f"standard_curve_fit_{st.session_state.fit_count}.png",
+                "image/png",
+                use_container_width=True,
+                help="Download the chart above as a PNG image."
+            )
+
+            plt.close(fig)
+        else:
+            st.markdown("""
+            <div style="background:#fff; border:1px dashed #ddddd8; border-radius:8px;
+                        height:320px; display:flex; align-items:center; justify-content:center;">
+                <span style="color:#bbb; font-family:'DM Mono',monospace; font-size:0.85rem;">
+                    Fit a model to see the curve
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
 
 st.markdown("""
 <div style="font-family:'DM Mono',monospace; font-size:0.7rem; color:#ccc;
