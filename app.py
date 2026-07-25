@@ -774,12 +774,16 @@ with left:
                         st.session_state.last_od = None
                         st.session_state.last_conc = None
 
+                        # Switch the curve to "All results" so the batch shows up on the
+                        # graph immediately instead of leaving "Latest result" empty.
+                        st.session_state.plot_mode = "All results"
+
                         summary = f"✓ {len(values)} sample(s) calculated — {n_ok} in range"
                         if n_below:
                             summary += f", {n_below} below LOD"
                         if n_extrap:
                             summary += f", {n_extrap} extrapolated"
-                        summary += ". See Results History below — switch the curve to \"All results\" to plot them together."
+                        summary += ". Plotted on the curve — see Results History below."
                         st.success(summary)
                 except ValueError as e:
                     st.error(str(e))
