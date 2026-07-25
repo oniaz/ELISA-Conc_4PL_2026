@@ -1,5 +1,5 @@
-streamlit
-numpy
-scipy
-matplotlib
-pandas
+matplotlib==3.11.1
+numpy==2.5.1
+pandas==3.0.5
+scipy==1.18.0
+streamlit==1.60.0
