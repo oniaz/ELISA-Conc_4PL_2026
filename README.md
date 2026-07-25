@@ -104,7 +104,11 @@ Click **▶ FIT MODEL**. The app will:
 
 ### Calculating sample concentrations
 
-Enter your sample's OD value and click **⊕ CALCULATE CONCENTRATION**.
+You have two modes:
+
+**Single** — enter one OD value and click **⊕ CALCULATE CONCENTRATION**.
+
+**Batch (paste multiple)** — paste several OD values at once (comma-separated, one per line, or a mix of both — handy for pasting a column straight from a spreadsheet) and click **⊕ CALCULATE ALL**. Every value is run through the current curve and added to Results History in one go, with a summary of how many landed in range vs. below LOD vs. extrapolated.
 
 - Results within the standard curve range are shown normally
 - Results outside the range are flagged with a ⚠ extrapolation warning — treat these with caution

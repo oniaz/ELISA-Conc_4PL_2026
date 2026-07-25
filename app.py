@@ -167,6 +167,49 @@ def inverse_four_param_logistic(OD, A, B, C, D):
         return np.nan  # would require a fractional power of a negative number
     return C * (numerator ** (1 / B))
 
+def calculate_sample(sample_od, A, B, C, D, zero_od, has_zero, od_min, od_max):
+    """
+    Run one sample OD through the fitted curve. Returns a dict with the
+    zero-corrected OD, the back-calculated concentration (or None if it
+    couldn't be determined), and below-LOD/extrapolated flags.
+    """
+    od_corrected = sample_od - zero_od if has_zero else sample_od
+
+    # If corrected OD ≤ 0 and we have a zero standard, the sample is at or
+    # below the zero standard — concentration is 0, no need to invert the curve.
+    if has_zero and od_corrected <= 0:
+        # Only a true zero if the raw OD is essentially the zero standard itself.
+        # A small negative corrected OD is just noise around the blank — below LOD.
+        if abs(od_corrected) < 1e-4:
+            conc_val, extrapolated, below_lod = 0.0, False, False
+        else:
+            conc_val, extrapolated, below_lod = None, False, True
+    elif od_corrected < od_min:
+        # Corrected OD is positive but below the lowest standard on the curve
+        conc_val, extrapolated, below_lod = None, False, True
+    else:
+        conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
+        extrapolated = od_corrected > od_max
+        below_lod = False
+        # OD above top asymptote makes numerator negative → nan
+        if np.isnan(conc_val):
+            conc_val, extrapolated = None, True
+
+    return {"od_corrected": od_corrected, "conc_val": conc_val,
+            "extrapolated": extrapolated, "below_lod": below_lod}
+
+def parse_batch_od(text):
+    """Parse pasted OD values (comma- and/or newline-separated) into floats."""
+    tokens = [t.strip() for t in text.replace("\n", ",").split(",")]
+    tokens = [t for t in tokens if t]
+    values = []
+    for t in tokens:
+        try:
+            values.append(float(t))
+        except ValueError:
+            raise ValueError(f"Couldn't parse '{t}' as a number.")
+    return values
+
 def fit_model(concentration, OD):
     # A = bottom asymptote (≤ 0 after zero subtraction), D = top asymptote (≥ 0)
     # B > 0 (positive slope), C > 0 (EC50 must be positive)
@@ -620,77 +663,128 @@ with left:
     if not st.session_state.model_ready:
         st.caption("Fit a model above to enable sample calculation.")
 
-    sample_od = st.number_input(
-        "Sample OD value",
-        min_value=0.0, step=0.001, format="%.4f",
-        value=None, placeholder="e.g. 0.4800",
+    calc_mode = st.radio(
+        "Sample calculation mode",
+        ["Single", "Batch (paste multiple)"],
+        horizontal=True,
+        key="calc_mode",
+        label_visibility="collapsed",
         disabled=not st.session_state.model_ready,
-        key="sample_od"
     )
 
-    calc_clicked = st.button("⊕  CALCULATE CONCENTRATION",
-                             use_container_width=True,
-                             disabled=not st.session_state.model_ready)
+    if calc_mode == "Single":
+        sample_od = st.number_input(
+            "Sample OD value",
+            min_value=0.0, step=0.001, format="%.4f",
+            value=None, placeholder="e.g. 0.4800",
+            disabled=not st.session_state.model_ready,
+            key="sample_od"
+        )
 
-    if calc_clicked:
-        if sample_od is None:
-            st.error("Enter a sample OD value before calculating.")
-        else:
-            try:
-                A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
-                zero_od = st.session_state.get("zero_od", 0.0)
-                has_zero = st.session_state.get("has_zero_standard", False)
+        calc_clicked = st.button("⊕  CALCULATE CONCENTRATION",
+                                 use_container_width=True,
+                                 disabled=not st.session_state.model_ready)
 
-                # Subtract zero standard if applicable
-                od_corrected = sample_od - zero_od if has_zero else sample_od
-
-                # If corrected OD ≤ 0 and we have a zero standard, the sample is at or
-                # below the zero standard — concentration is 0, no need to invert the curve.
-                if has_zero and od_corrected <= 0:
-                    # Only a true zero if the raw OD is essentially the zero standard itself.
-                    # A small negative corrected OD is just noise around the blank — below LOD.
-                    if abs(od_corrected) < 1e-4:
-                        conc_val = 0.0
-                        extrapolated = False
-                        below_lod = False
-                    else:
-                        conc_val = None
-                        extrapolated = False
-                        below_lod = True
-                else:
+        if calc_clicked:
+            if sample_od is None:
+                st.error("Enter a sample OD value before calculating.")
+            else:
+                try:
+                    A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+                    zero_od = st.session_state.get("zero_od", 0.0)
+                    has_zero = st.session_state.get("has_zero_standard", False)
                     od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
                     od_max = float(np.max(st.session_state.OD))
-                    # Corrected OD is positive but below the lowest standard on the curve
-                    if od_corrected < od_min:
-                        conc_val = None  # flagged as below detection limit
-                        extrapolated = False
-                        below_lod = True
+
+                    r = calculate_sample(sample_od, A, B, C, D, zero_od, has_zero, od_min, od_max)
+                    od_corrected, conc_val = r["od_corrected"], r["conc_val"]
+                    extrapolated, below_lod = r["extrapolated"], r["below_lod"]
+
+                    st.session_state.last_od           = od_corrected
+                    st.session_state.last_od_raw       = sample_od
+                    st.session_state.last_conc         = conc_val
+                    st.session_state.last_extrapolated = extrapolated
+                    st.session_state.last_below_lod    = below_lod
+                    st.session_state.results.append({
+                        "Model Fit #": st.session_state.fit_count,
+                        "Raw OD": round(sample_od, 4),
+                        "Corrected OD": round(od_corrected, 4) if has_zero else "—",
+                        "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
+                        "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else ""),
+                        "_od_corrected": od_corrected,
+                        "_conc_value": conc_val,
+                    })
+                except ValueError as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    else:  # Batch mode
+        batch_text = st.text_area(
+            "Sample OD values",
+            placeholder="e.g. 0.42, 0.55, 0.61\nor one per line, pasted straight from a spreadsheet column",
+            height=120,
+            disabled=not st.session_state.model_ready,
+            key="batch_od_input",
+            help="Comma-separated and/or one-per-line — both work, and you can mix them."
+        )
+
+        calc_all_clicked = st.button("⊕  CALCULATE ALL",
+                                     use_container_width=True,
+                                     disabled=not st.session_state.model_ready)
+
+        if calc_all_clicked:
+            if not batch_text or not batch_text.strip():
+                st.error("Paste one or more OD values before calculating.")
+            else:
+                try:
+                    values = parse_batch_od(batch_text)
+                    if not values:
+                        st.error("No OD values found.")
                     else:
-                        conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
-                        extrapolated = od_corrected > od_max
-                        below_lod = False
-                        # OD above top asymptote makes numerator negative → nan
-                        if np.isnan(conc_val):
-                            conc_val = None
-                            extrapolated = True
-                st.session_state.last_od           = od_corrected
-                st.session_state.last_od_raw       = sample_od
-                st.session_state.last_conc         = conc_val
-                st.session_state.last_extrapolated = extrapolated
-                st.session_state.last_below_lod    = below_lod
-                st.session_state.results.append({
-                    "Model Fit #": st.session_state.fit_count,
-                    "Raw OD": round(sample_od, 4),
-                    "Corrected OD": round(od_corrected, 4) if has_zero else "—",
-                    "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
-                    "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else ""),
-                    "_od_corrected": od_corrected,
-                    "_conc_value": conc_val,
-                })
-            except ValueError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Error: {e}")
+                        A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+                        zero_od = st.session_state.get("zero_od", 0.0)
+                        has_zero = st.session_state.get("has_zero_standard", False)
+                        od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
+                        od_max = float(np.max(st.session_state.OD))
+
+                        n_ok = n_below = n_extrap = 0
+                        for v in values:
+                            r = calculate_sample(v, A, B, C, D, zero_od, has_zero, od_min, od_max)
+                            od_corrected, conc_val = r["od_corrected"], r["conc_val"]
+                            extrapolated, below_lod = r["extrapolated"], r["below_lod"]
+                            st.session_state.results.append({
+                                "Model Fit #": st.session_state.fit_count,
+                                "Raw OD": round(v, 4),
+                                "Corrected OD": round(od_corrected, 4) if has_zero else "—",
+                                "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
+                                "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else ""),
+                                "_od_corrected": od_corrected,
+                                "_conc_value": conc_val,
+                            })
+                            if below_lod:
+                                n_below += 1
+                            elif extrapolated:
+                                n_extrap += 1
+                            else:
+                                n_ok += 1
+
+                        # A single "latest result" box doesn't make sense for a batch —
+                        # clear it so the summary below is what's shown instead.
+                        st.session_state.last_od = None
+                        st.session_state.last_conc = None
+
+                        summary = f"✓ {len(values)} sample(s) calculated — {n_ok} in range"
+                        if n_below:
+                            summary += f", {n_below} below LOD"
+                        if n_extrap:
+                            summary += f", {n_extrap} extrapolated"
+                        summary += ". See Results History below — switch the curve to \"All results\" to plot them together."
+                        st.success(summary)
+                except ValueError as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
     if st.session_state.last_od is not None:
         extrap     = st.session_state.get("last_extrapolated", False)
