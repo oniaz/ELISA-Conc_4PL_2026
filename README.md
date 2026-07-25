@@ -115,6 +115,8 @@ All results are logged in the **Results History** table with the fit number they
 
 Click **⬇ Export CSV** to download all calculated results.
 
+Click **⬇ Export curve image (PNG)** above the plot to save the fitted curve chart itself.
+
 ---
 
 ## Project structure

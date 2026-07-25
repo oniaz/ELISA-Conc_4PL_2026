@@ -1,7 +1,7 @@
+import io
 import numpy as np
 import scipy.optimize as opt
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 import streamlit as st
 import pandas as pd
 
@@ -586,6 +586,7 @@ with left:
     sample_od = st.number_input(
         "Sample OD value",
         min_value=0.0, step=0.001, format="%.4f",
+        value=None, placeholder="e.g. 0.4800",
         disabled=not st.session_state.model_ready,
         key="sample_od"
     )
@@ -595,59 +596,62 @@ with left:
                              disabled=not st.session_state.model_ready)
 
     if calc_clicked:
-        try:
-            A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
-            zero_od = st.session_state.get("zero_od", 0.0)
-            has_zero = st.session_state.get("has_zero_standard", False)
+        if sample_od is None:
+            st.error("Enter a sample OD value before calculating.")
+        else:
+            try:
+                A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+                zero_od = st.session_state.get("zero_od", 0.0)
+                has_zero = st.session_state.get("has_zero_standard", False)
 
-            # Subtract zero standard if applicable
-            od_corrected = sample_od - zero_od if has_zero else sample_od
+                # Subtract zero standard if applicable
+                od_corrected = sample_od - zero_od if has_zero else sample_od
 
-            # If corrected OD ≤ 0 and we have a zero standard, the sample is at or
-            # below the zero standard — concentration is 0, no need to invert the curve.
-            if has_zero and od_corrected <= 0:
-                # Only a true zero if the raw OD is essentially the zero standard itself.
-                # A small negative corrected OD is just noise around the blank — below LOD.
-                if abs(od_corrected) < 1e-4:
-                    conc_val = 0.0
-                    extrapolated = False
-                    below_lod = False
-                else:
-                    conc_val = None
-                    extrapolated = False
-                    below_lod = True
-            else:
-                od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
-                od_max = float(np.max(st.session_state.OD))
-                # Corrected OD is positive but below the lowest standard on the curve
-                if od_corrected < od_min:
-                    conc_val = None  # flagged as below detection limit
-                    extrapolated = False
-                    below_lod = True
-                else:
-                    conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
-                    extrapolated = od_corrected > od_max
-                    below_lod = False
-                    # OD above top asymptote makes numerator negative → nan
-                    if np.isnan(conc_val):
+                # If corrected OD ≤ 0 and we have a zero standard, the sample is at or
+                # below the zero standard — concentration is 0, no need to invert the curve.
+                if has_zero and od_corrected <= 0:
+                    # Only a true zero if the raw OD is essentially the zero standard itself.
+                    # A small negative corrected OD is just noise around the blank — below LOD.
+                    if abs(od_corrected) < 1e-4:
+                        conc_val = 0.0
+                        extrapolated = False
+                        below_lod = False
+                    else:
                         conc_val = None
-                        extrapolated = True
-            st.session_state.last_od           = od_corrected
-            st.session_state.last_od_raw       = sample_od
-            st.session_state.last_conc         = conc_val
-            st.session_state.last_extrapolated = extrapolated
-            st.session_state.last_below_lod    = below_lod
-            st.session_state.results.append({
-                "Model Fit #": st.session_state.fit_count,
-                "Raw OD": round(sample_od, 4),
-                "Corrected OD": round(od_corrected, 4) if has_zero else "—",
-                "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
-                "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else "")
-            })
-        except ValueError as e:
-            st.error(str(e))
-        except Exception as e:
-            st.error(f"Error: {e}")
+                        extrapolated = False
+                        below_lod = True
+                else:
+                    od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
+                    od_max = float(np.max(st.session_state.OD))
+                    # Corrected OD is positive but below the lowest standard on the curve
+                    if od_corrected < od_min:
+                        conc_val = None  # flagged as below detection limit
+                        extrapolated = False
+                        below_lod = True
+                    else:
+                        conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
+                        extrapolated = od_corrected > od_max
+                        below_lod = False
+                        # OD above top asymptote makes numerator negative → nan
+                        if np.isnan(conc_val):
+                            conc_val = None
+                            extrapolated = True
+                st.session_state.last_od           = od_corrected
+                st.session_state.last_od_raw       = sample_od
+                st.session_state.last_conc         = conc_val
+                st.session_state.last_extrapolated = extrapolated
+                st.session_state.last_below_lod    = below_lod
+                st.session_state.results.append({
+                    "Model Fit #": st.session_state.fit_count,
+                    "Raw OD": round(sample_od, 4),
+                    "Corrected OD": round(od_corrected, 4) if has_zero else "—",
+                    "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
+                    "Note": "extrapolated" if extrapolated else ("below LOD" if below_lod else "")
+                })
+            except ValueError as e:
+                st.error(str(e))
+            except Exception as e:
+                st.error(f"Error: {e}")
 
     if st.session_state.last_od is not None:
         extrap     = st.session_state.get("last_extrapolated", False)
@@ -709,6 +713,19 @@ with right:
             st.session_state.last_od, st.session_state.last_conc
         )
         st.pyplot(fig, use_container_width=True)
+
+        img_buf = io.BytesIO()
+        fig.savefig(img_buf, format="png", dpi=200, bbox_inches="tight")
+        img_buf.seek(0)
+        st.download_button(
+            "⬇  Export curve image (PNG)",
+            img_buf,
+            f"standard_curve_fit_{st.session_state.fit_count}.png",
+            "image/png",
+            use_container_width=True,
+            help="Download the chart above as a PNG image."
+        )
+
         plt.close(fig)
     else:
         st.markdown("""
