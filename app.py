@@ -689,6 +689,11 @@ with left:
     model_type = "4pl" if model_type_choice.startswith("4PL") else "linear"
     min_points = 4 if model_type == "4pl" else 2
 
+    if st.session_state.model_ready and model_type != st.session_state.model_type:
+        active_label = "4PL" if st.session_state.model_type == "4pl" else "Linear"
+        pending_label = "4PL" if model_type == "4pl" else "Linear"
+        st.caption(f"Currently fitted: {active_label}. Click FIT MODEL to (re)fit as {pending_label} instead.")
+
     fit_clicked = st.button("▶  FIT MODEL", type="primary", use_container_width=True)
 
     if fit_clicked:
@@ -773,7 +778,8 @@ with left:
     # ── Model parameters display
     if st.session_state.model_ready:
         st.markdown("---")
-        st.markdown('<div class="section-head">Model Parameters</div>', unsafe_allow_html=True)
+        model_label = "4PL" if st.session_state.model_type == "4pl" else "Linear"
+        st.markdown(f'<div class="section-head">Model Parameters — {model_label}</div>', unsafe_allow_html=True)
         r2 = st.session_state.r2
         r2_color = "#2d7a55" if r2 >= 0.99 else "#a06000" if r2 >= 0.95 else "#c0392b"
         r2_label = "excellent" if r2 >= 0.99 else "acceptable" if r2 >= 0.95 else "poor — check data"
@@ -896,6 +902,7 @@ with left:
                     st.session_state.last_batch_points = []  # a fresh single calc supersedes any prior batch
                     st.session_state.results.append({
                         "Model Fit #": st.session_state.fit_count,
+                        "Model": "4PL" if model_type == "4pl" else "Linear",
                         "Raw OD": round(sample_od, 4),
                         "Corrected OD": round(od_corrected, 4) if has_zero else "—",
                         "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
@@ -950,6 +957,7 @@ with left:
                             extrapolated, below_lod = r["extrapolated"], r["below_lod"]
                             st.session_state.results.append({
                                 "Model Fit #": st.session_state.fit_count,
+                                "Model": "4PL" if model_type == "4pl" else "Linear",
                                 "Raw OD": round(v, 4),
                                 "Corrected OD": round(od_corrected, 4) if has_zero else "—",
                                 "Concentration": "below LOD" if below_lod else ("> curve max (extrapolated)" if extrapolated and conc_val is None else round(conc_val, 4)),
@@ -1083,6 +1091,13 @@ with right:
                     st.rerun()
 
         df_full = pd.DataFrame(st.session_state.results)
+        if "Model" in df_full.columns:
+            df_full["Model"] = df_full["Model"].fillna("—")
+            # Keep Model right next to Model Fit # regardless of dict insertion order
+            cols = df_full.columns.tolist()
+            cols.remove("Model")
+            cols.insert(cols.index("Model Fit #") + 1, "Model")
+            df_full = df_full[cols]
         df_display = df_full.drop(columns=["_od_corrected", "_conc_value"], errors="ignore")
         if st.session_state.units:
             df_display = df_display.rename(columns={"Concentration": f"Concentration ({st.session_state.units})"})
