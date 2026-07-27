@@ -405,10 +405,9 @@ def make_figure(model_type, params, OD, concentration, sample_points=None, units
     ax.tick_params(colors="#aaa", labelsize=8)
     ax.xaxis.label.set_color("#888")
     ax.yaxis.label.set_color("#888")
-    x_label = f"Concentration ({units})" if units else "Concentration"
-    ax.set_xlabel(x_label, fontsize=9, fontfamily="monospace")
-    ax.set_ylabel("OD (450 nm)", fontsize=9, fontfamily="monospace")
-    ax.set_title(title, color="#1a1a1a", fontsize=11,
+    ax.set_xlabel("Concentration", fontsize=9, fontfamily="monospace")
+    ax.set_ylabel("OD", fontsize=9, fontfamily="monospace")
+    ax.set_title("4PL Standard Curve", color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
     ax.grid(True, linestyle=":", linewidth=0.5, color="#e8e8e4", alpha=0.9)
     legend = ax.legend(fontsize=8, facecolor="#fff", edgecolor="#e8e8e4",
@@ -1192,6 +1191,6 @@ with right:
 st.markdown("""
 <div style="font-family:'DM Mono',monospace; font-size:0.7rem; color:#ccc;
             text-align:center; padding: 24px 0 8px 0;">
-    built by Omnia Abouhaikal &nbsp;·&nbsp; @oniaz
+    &copy;oniaz
 </div>
 """, unsafe_allow_html=True)
