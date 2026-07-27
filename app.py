@@ -1,6 +1,7 @@
 import io
 import numpy as np
 import scipy.optimize as opt
+from scipy import stats as scipy_stats
 import matplotlib.pyplot as plt
 import streamlit as st
 import pandas as pd
@@ -167,11 +168,21 @@ def inverse_four_param_logistic(OD, A, B, C, D):
         return np.nan  # would require a fractional power of a negative number
     return C * (numerator ** (1 / B))
 
-def calculate_sample(sample_od, A, B, C, D, zero_od, has_zero, od_min, od_max):
+def invert_model(od_corrected, model_type, params):
+    """Back-calculate concentration from a corrected OD, for either fit type."""
+    if model_type == "linear":
+        slope, intercept = params["slope"], params["intercept"]
+        if slope == 0:
+            return np.nan  # flat line — can't invert
+        return (od_corrected - intercept) / slope
+    A, B, C, D = params["A"], params["B"], params["C"], params["D"]
+    return inverse_four_param_logistic(od_corrected, A, B, C, D)
+
+def calculate_sample(sample_od, model_type, params, zero_od, has_zero, od_min, od_max):
     """
-    Run one sample OD through the fitted curve. Returns a dict with the
-    zero-corrected OD, the back-calculated concentration (or None if it
-    couldn't be determined), and below-LOD/extrapolated flags.
+    Run one sample OD through the fitted curve (4PL or linear). Returns a dict
+    with the zero-corrected OD, the back-calculated concentration (or None if
+    it couldn't be determined), and below-LOD/extrapolated flags.
     """
     od_corrected = sample_od - zero_od if has_zero else sample_od
 
@@ -188,10 +199,10 @@ def calculate_sample(sample_od, A, B, C, D, zero_od, has_zero, od_min, od_max):
         # Corrected OD is positive but below the lowest standard on the curve
         conc_val, extrapolated, below_lod = None, False, True
     else:
-        conc_val = inverse_four_param_logistic(od_corrected, A, B, C, D)
+        conc_val = invert_model(od_corrected, model_type, params)
         extrapolated = od_corrected > od_max
         below_lod = False
-        # OD above top asymptote makes numerator negative → nan
+        # A non-invertible OD (top asymptote or a flat line) comes back nan
         if np.isnan(conc_val):
             conc_val, extrapolated = None, True
 
@@ -210,7 +221,7 @@ def parse_batch_od(text):
             raise ValueError(f"Couldn't parse '{t}' as a number.")
     return values
 
-def fit_model(concentration, OD):
+def fit_model_4pl(concentration, OD):
     # A = bottom asymptote (≤ 0 after zero subtraction), D = top asymptote (≥ 0)
     # B > 0 (positive slope), C > 0 (EC50 must be positive)
     lower = [-np.inf, 1e-6,  1e-9,    0.0]
@@ -222,6 +233,17 @@ def fit_model(concentration, OD):
         maxfev=10000
     )
     return params, covariance
+
+def fit_model_linear(concentration, OD):
+    """Simple OLS linear regression: OD = slope * concentration + intercept."""
+    result = scipy_stats.linregress(concentration, OD)
+    return {
+        "slope": result.slope,
+        "intercept": result.intercept,
+        "r2": result.rvalue ** 2,
+        "slope_se": result.stderr,
+        "intercept_se": getattr(result, "intercept_stderr", None),
+    }
 
 def compute_r2(concentration, OD, A, B, C, D):
     predicted = four_param_logistic(concentration, A, B, C, D)
@@ -331,10 +353,12 @@ def build_standard_csv(concentration, od):
     return df.to_csv(index=False).encode()
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
-def make_figure(A, B, C, D, OD, concentration, sample_points=None, units=""):
+def make_figure(model_type, params, OD, concentration, sample_points=None, units=""):
     """
     Plot per manual: X-axis = concentration, Y-axis = OD (corrected if applicable).
     OD and concentration arrays passed in are already corrected (zero-subtracted if applicable).
+
+    model_type: "4pl" (params: A, B, C, D) or "linear" (params: slope, intercept).
 
     sample_points: optional list of {"od": float, "conc": float} dicts to plot as
     sample markers. A single point gets dashed guide lines to the axes (the classic
@@ -347,9 +371,16 @@ def make_figure(A, B, C, D, OD, concentration, sample_points=None, units=""):
 
     # Curve: x = concentration, y = OD
     x_vals = np.linspace(np.min(concentration), np.max(concentration), 500)
-    y_vals = four_param_logistic(x_vals, A, B, C, D)
+    if model_type == "4pl":
+        y_vals = four_param_logistic(x_vals, params["A"], params["B"], params["C"], params["D"])
+        curve_label = "Fitted 4PL Curve"
+        title = "4PL Standard Curve"
+    else:
+        y_vals = params["slope"] * x_vals + params["intercept"]
+        curve_label = "Fitted Linear Regression"
+        title = "Linear Standard Curve"
 
-    ax.plot(x_vals, y_vals, color="#1a1a1a", linewidth=2, label="Fitted 4PL Curve", zorder=2)
+    ax.plot(x_vals, y_vals, color="#1a1a1a", linewidth=2, label=curve_label, zorder=2)
     ax.scatter(concentration, OD, color="#e03e3e", s=65, zorder=3,
                label="Standard Points", edgecolors="#fff", linewidths=0.5)
 
@@ -377,7 +408,7 @@ def make_figure(A, B, C, D, OD, concentration, sample_points=None, units=""):
     x_label = f"Concentration ({units})" if units else "Concentration"
     ax.set_xlabel(x_label, fontsize=9, fontfamily="monospace")
     ax.set_ylabel("OD (450 nm)", fontsize=9, fontfamily="monospace")
-    ax.set_title("4PL Standard Curve", color="#1a1a1a", fontsize=11,
+    ax.set_title(title, color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
     ax.grid(True, linestyle=":", linewidth=0.5, color="#e8e8e4", alpha=0.9)
     legend = ax.legend(fontsize=8, facecolor="#fff", edgecolor="#e8e8e4",
@@ -411,6 +442,9 @@ for key, val in {
     "confirm_reset_points": False,
     "confirm_clear_results": False,
     "units": "",
+    "model_type": "4pl",
+    "slope": None, "intercept": None,
+    "slope_se": None, "intercept_se": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -640,6 +674,21 @@ with left:
 
     # ── Fit button (shared)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    model_type_choice = st.radio(
+        "Fit type",
+        ["4PL (recommended)", "Linear"],
+        horizontal=True,
+        key="model_type_choice",
+        help=(
+            "4PL — sigmoidal fit, the standard for most ELISA standard curves.\n\n"
+            "Linear — straight-line fit (OD = slope × concentration + intercept). "
+            "Only appropriate if your assay's standard curve is genuinely linear "
+            "over the range you're using."
+        ),
+    )
+    model_type = "4pl" if model_type_choice.startswith("4PL") else "linear"
+    min_points = 4 if model_type == "4pl" else 2
+
     fit_clicked = st.button("▶  FIT MODEL", type="primary", use_container_width=True)
 
     if fit_clicked:
@@ -654,8 +703,8 @@ with left:
                 od   = np.array(od_final,   dtype=float)
                 if len(conc) != len(od):
                     st.error("Concentration and OD arrays must be the same length.")
-                elif len(conc) < 4:
-                    st.error("Need at least 4 data points to fit a 4PL model.")
+                elif len(conc) < min_points:
+                    st.error(f"Need at least {min_points} data points to fit a {model_type_choice.split(' ')[0]} model.")
                 elif np.any(conc < 0):
                     st.error("Concentration values must be non-negative.")
                 else:
@@ -675,20 +724,13 @@ with left:
                         zero_od = 0.0
                         od_corrected = od  # no subtraction
 
-                    with st.spinner("Fitting 4PL model…"):
-                        (A, B, C, D), cov = fit_model(conc, od_corrected)
-                    r2 = compute_r2(conc, od_corrected, A, B, C, D)
-                    param_stderr = compute_param_stderr(cov)
-
                     had_prior_result = st.session_state.model_ready and (
                         st.session_state.last_od is not None or st.session_state.last_batch_points
                     )
 
-                    st.session_state.update({
+                    fit_fields = {
                         "model_ready": True,
-                        "A": A, "B": B, "C": C, "D": D,
-                        "r2": r2,
-                        "param_stderr": param_stderr,
+                        "model_type": model_type,
                         "concentration": conc,
                         "OD": od_corrected,
                         "zero_od": zero_od,
@@ -698,7 +740,30 @@ with left:
                         "last_extrapolated": False,
                         "last_batch_points": [],
                         "fit_count": st.session_state.fit_count + 1,
-                    })
+                    }
+
+                    if model_type == "4pl":
+                        with st.spinner("Fitting 4PL model…"):
+                            (A, B, C, D), cov = fit_model_4pl(conc, od_corrected)
+                        r2 = compute_r2(conc, od_corrected, A, B, C, D)
+                        param_stderr = compute_param_stderr(cov)
+                        fit_fields.update({
+                            "A": A, "B": B, "C": C, "D": D,
+                            "r2": r2, "param_stderr": param_stderr,
+                            "slope": None, "intercept": None,
+                            "slope_se": None, "intercept_se": None,
+                        })
+                    else:
+                        with st.spinner("Fitting linear model…"):
+                            lin = fit_model_linear(conc, od_corrected)
+                        fit_fields.update({
+                            "A": None, "B": None, "C": None, "D": None,
+                            "r2": lin["r2"], "param_stderr": [None, None, None, None],
+                            "slope": lin["slope"], "intercept": lin["intercept"],
+                            "slope_se": lin["slope_se"], "intercept_se": lin["intercept_se"],
+                        })
+
+                    st.session_state.update(fit_fields)
                     st.markdown('<span class="pill-success">✓ Model fitted</span>', unsafe_allow_html=True)
                     if had_prior_result:
                         st.info("Re-fitting cleared the previously displayed sample result — recalculate it against the new curve if you still need it.")
@@ -709,18 +774,26 @@ with left:
     if st.session_state.model_ready:
         st.markdown("---")
         st.markdown('<div class="section-head">Model Parameters</div>', unsafe_allow_html=True)
-        A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
         r2 = st.session_state.r2
         r2_color = "#2d7a55" if r2 >= 0.99 else "#a06000" if r2 >= 0.95 else "#c0392b"
         r2_label = "excellent" if r2 >= 0.99 else "acceptable" if r2 >= 0.95 else "poor — check data"
-
-        stderrs = st.session_state.get("param_stderr") or [None, None, None, None]
-        param_names = ["A — Bottom asymptote", "B — Hill slope", "C — EC50 / inflection", "D — Top asymptote"]
-        param_values = [A, B, C, D]
         od_range   = float(np.max(st.session_state.OD) - np.min(st.session_state.OD))
         conc_range = float(np.max(st.session_state.concentration) - np.min(st.session_state.concentration))
-        param_kinds  = ["scale", "ratio", "scale", "scale"]
-        param_scales = [od_range, None, conc_range, od_range]
+
+        if st.session_state.model_type == "4pl":
+            A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+            stderrs = st.session_state.get("param_stderr") or [None, None, None, None]
+            param_names  = ["A — Bottom asymptote", "B — Hill slope", "C — EC50 / inflection", "D — Top asymptote"]
+            param_values = [A, B, C, D]
+            param_kinds  = ["scale", "ratio", "scale", "scale"]
+            param_scales = [od_range, None, conc_range, od_range]
+        else:
+            param_names  = ["Slope (m)", "Intercept (b)"]
+            param_values = [st.session_state.slope, st.session_state.intercept]
+            stderrs      = [st.session_state.slope_se, st.session_state.intercept_se]
+            param_kinds  = ["ratio", "scale"]
+            param_scales = [None, od_range]
+
         flags = [
             param_uncertainty_flag(kind, v, se, scale)
             for kind, v, se, scale in zip(param_kinds, param_values, stderrs, param_scales)
@@ -742,7 +815,7 @@ with left:
                 f'</div>'
             )
             if flag in ("high", "unknown"):
-                flagged_names.append(name.split(" — ")[0])
+                flagged_names.append(name.split(" — ")[0].split(" (")[0])
 
         st.markdown(f"""
         <div class="param-grid">
@@ -759,7 +832,10 @@ with left:
                 f"Parameter(s) {', '.join(flagged_names)} are poorly constrained by this data "
                 f"(large or non-estimable standard error) even though R² may look fine — R² measures "
                 f"how well the curve fits the standard points, not how reliable each parameter is. "
-                f"Consider adding more standards, especially near the low/high ends of the curve."
+                + ("Consider adding more standards, especially near the low/high ends of the curve."
+                   if st.session_state.model_type == "4pl" else
+                   "For a linear fit, a poorly-constrained slope in particular can mean there's little "
+                   "real relationship between concentration and OD over this range.")
             )
 
     st.markdown("---")
@@ -797,13 +873,18 @@ with left:
                 st.error("Enter a sample OD value before calculating.")
             else:
                 try:
-                    A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+                    model_type = st.session_state.model_type
+                    if model_type == "4pl":
+                        params = {"A": st.session_state.A, "B": st.session_state.B,
+                                  "C": st.session_state.C, "D": st.session_state.D}
+                    else:
+                        params = {"slope": st.session_state.slope, "intercept": st.session_state.intercept}
                     zero_od = st.session_state.get("zero_od", 0.0)
                     has_zero = st.session_state.get("has_zero_standard", False)
                     od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
                     od_max = float(np.max(st.session_state.OD))
 
-                    r = calculate_sample(sample_od, A, B, C, D, zero_od, has_zero, od_min, od_max)
+                    r = calculate_sample(sample_od, model_type, params, zero_od, has_zero, od_min, od_max)
                     od_corrected, conc_val = r["od_corrected"], r["conc_val"]
                     extrapolated, below_lod = r["extrapolated"], r["below_lod"]
 
@@ -850,7 +931,12 @@ with left:
                     if not values:
                         st.error("No OD values found.")
                     else:
-                        A, B, C, D = st.session_state.A, st.session_state.B, st.session_state.C, st.session_state.D
+                        model_type = st.session_state.model_type
+                        if model_type == "4pl":
+                            params = {"A": st.session_state.A, "B": st.session_state.B,
+                                      "C": st.session_state.C, "D": st.session_state.D}
+                        else:
+                            params = {"slope": st.session_state.slope, "intercept": st.session_state.intercept}
                         zero_od = st.session_state.get("zero_od", 0.0)
                         has_zero = st.session_state.get("has_zero_standard", False)
                         od_min = 0.0 if has_zero else float(np.min(st.session_state.OD))
@@ -859,7 +945,7 @@ with left:
                         n_ok = n_below = n_extrap = 0
                         batch_points = []
                         for v in values:
-                            r = calculate_sample(v, A, B, C, D, zero_od, has_zero, od_min, od_max)
+                            r = calculate_sample(v, model_type, params, zero_od, has_zero, od_min, od_max)
                             od_corrected, conc_val = r["od_corrected"], r["conc_val"]
                             extrapolated, below_lod = r["extrapolated"], r["below_lod"]
                             st.session_state.results.append({
@@ -1047,9 +1133,14 @@ with right:
                 if plot_mode == "Selected rows" and not selected_rows:
                     st.caption("Select one or more rows in Results History below to plot them here.")
 
+            if st.session_state.model_type == "4pl":
+                fig_params = {"A": st.session_state.A, "B": st.session_state.B,
+                              "C": st.session_state.C, "D": st.session_state.D}
+            else:
+                fig_params = {"slope": st.session_state.slope, "intercept": st.session_state.intercept}
+
             fig = make_figure(
-                st.session_state.A, st.session_state.B,
-                st.session_state.C, st.session_state.D,
+                st.session_state.model_type, fig_params,
                 st.session_state.OD, st.session_state.concentration,
                 sample_points, units=st.session_state.units
             )

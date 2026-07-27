@@ -1,7 +1,7 @@
 # ELISA Standard Curve Analyzer - 4PL Model Fitting
 ![App Icon](favicon.png)
 
-A clean, minimal web app for fitting **Four-Parameter Logistic (4PL)** curves to ELISA standard curve data and calculating sample concentrations from OD readings.
+A clean, minimal web app for fitting **Four-Parameter Logistic (4PL)** curves — or a simple **linear** fit, if your assay calls for it — to ELISA standard curve data and calculating sample concentrations from OD readings.
 
 Built with Python + Streamlit.
 
@@ -12,10 +12,10 @@ Built with Python + Streamlit.
 In ELISA, you run a series of standards with known concentrations and measure their optical density (OD). This app:
 
 1. Takes your standard concentration and OD values
-2. Fits a 4PL curve to the data
+2. Fits a 4PL curve (default) or a linear regression to the data
 3. Lets you enter unknown sample OD values and back-calculates their concentrations
 4. Flags extrapolated results (OD outside standard curve range)
-5. Shows R² so you can assess fit quality
+5. Shows R² and per-parameter standard errors so you can assess fit quality
 6. Exports results to CSV
 
 ---
@@ -34,6 +34,16 @@ y = D + (A - D) / (1 + (x / C)^B)
 | B | Hill slope (steepness of the curve) |
 | C | EC50 / inflection point |
 | D | Top asymptote (maximum response) |
+
+This is the standard model for ELISA standard curves, which are typically sigmoidal. Use it unless you have a specific reason not to.
+
+## The Linear Model
+
+```
+y = slope × x + intercept
+```
+
+A straight-line fit is only appropriate if your assay's response is genuinely linear across the concentration range you're using — which is uncommon for full-range ELISA curves, but sometimes true for a narrow working range or certain assay formats. If you're not sure which to use, 4PL is the safer default.
 
 ---
 
@@ -94,10 +104,10 @@ Note: this only imports/exports the standard curve *inputs* (concentration/OD pa
 
 ### Fitting the model
 
-Click **▶ FIT MODEL**. The app will:
-- Validate your inputs (minimum 4 points, no negative concentrations)
+Choose **4PL (recommended)** or **Linear**, then click **▶ FIT MODEL**. The app will:
+- Validate your inputs (minimum 4 points for 4PL, 2 for linear; no negative concentrations)
 - Warn you about duplicate concentration values
-- Display the fitted curve and parameters A, B, C, D, each with its standard error (± SE)
+- Display the fitted curve and its parameters, each with its standard error (± SE) — A, B, C, D for 4PL; Slope and Intercept for linear
 - Show R² with a color-coded quality indicator
 
 | R² | Quality |
