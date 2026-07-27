@@ -1,7 +1,7 @@
 # ELISA Standard Curve Analyzer - 4PL Model Fitting
 ![App Icon](favicon.png)
 
-A clean, minimal web app for fitting **Four-Parameter Logistic (4PL)** curves to ELISA standard curve data and calculating sample concentrations from OD readings.
+A clean, minimal web app for fitting **Four-Parameter Logistic (4PL)** curves — or a simple **linear** fit, if your assay calls for it — to ELISA standard curve data and calculating sample concentrations from OD readings.
 
 Built with Python + Streamlit.
 
@@ -12,10 +12,10 @@ Built with Python + Streamlit.
 In ELISA, you run a series of standards with known concentrations and measure their optical density (OD). This app:
 
 1. Takes your standard concentration and OD values
-2. Fits a 4PL curve to the data
+2. Fits a 4PL curve (default) or a linear regression to the data
 3. Lets you enter unknown sample OD values and back-calculates their concentrations
 4. Flags extrapolated results (OD outside standard curve range)
-5. Shows R² so you can assess fit quality
+5. Shows R² and per-parameter standard errors so you can assess fit quality
 6. Exports results to CSV
 
 ---
@@ -34,6 +34,16 @@ y = D + (A - D) / (1 + (x / C)^B)
 | B | Hill slope (steepness of the curve) |
 | C | EC50 / inflection point |
 | D | Top asymptote (maximum response) |
+
+This is the standard model for ELISA standard curves, which are typically sigmoidal. Use it unless you have a specific reason not to.
+
+## The Linear Model
+
+```
+y = slope × x + intercept
+```
+
+A straight-line fit is only appropriate if your assay's response is genuinely linear across the concentration range you're using — which is uncommon for full-range ELISA curves, but sometimes true for a narrow working range or certain assay formats. If you're not sure which to use, 4PL is the safer default.
 
 ---
 
@@ -54,9 +64,13 @@ streamlit run app.py
 
 ## How to use
 
+### Concentration units (optional)
+
+Pick a unit from the dropdown (e.g. `ng/mL`) or choose **Custom…** to type your own. This is purely cosmetic — it labels the curve's x-axis, the calculated result, and the Results History/CSV export column, but doesn't affect the fit or any calculation. Leave it as `(none)` to keep everything unit-agnostic, as before.
+
 ### Entering standard curve data
 
-You have two input modes:
+You have three input modes:
 
 **Bulk** — paste all values comma-separated:
 ```
@@ -66,12 +80,34 @@ OD:            0.05, 0.18, 0.35, 0.62, 0.95, 1.28
 
 **One by one** — add each concentration/OD pair individually using the `+ Add another point` button. Good for entering values directly from your plate reader as you go.
 
+**Import file** — upload a CSV with `concentration` and `od` columns to skip retyping data you've entered before. See [Import/Export](#importexport-standard-curve-data) below.
+
+### Import/Export standard curve data
+
+Once you've typed in a standard curve (via Bulk or One by one), click **⬇ Export data as CSV** to save it. That file can later be re-loaded via the **Import file** mode, so you don't have to retype the same standards every session.
+
+Expected file shape — two columns, `concentration` and `od`, one standard point per row:
+
+```
+concentration,od
+0,0.05
+10,0.18
+20,0.35
+40,0.62
+80,0.95
+160,1.28
+```
+
+A header row is preferred, but a plain two-column file without one is also accepted. Hover the **?** next to the file upload field in the app for a reminder of this format.
+
+Note: this only imports/exports the standard curve *inputs* (concentration/OD pairs) — not fitted parameters or the sample results history. Use **⬇ Export CSV** in Results History to export calculated sample results.
+
 ### Fitting the model
 
-Click **▶ FIT MODEL**. The app will:
-- Validate your inputs (minimum 4 points, no negative concentrations)
+Choose **4PL (recommended)** or **Linear**, then click **▶ FIT MODEL**. The app will:
+- Validate your inputs (minimum 4 points for 4PL, 2 for linear; no negative concentrations)
 - Warn you about duplicate concentration values
-- Display the fitted curve and parameters A, B, C, D
+- Display the fitted curve and its parameters, each with its standard error (± SE) — A, B, C, D for 4PL; Slope and Intercept for linear
 - Show R² with a color-coded quality indicator
 
 | R² | Quality |
@@ -80,9 +116,15 @@ Click **▶ FIT MODEL**. The app will:
 | ≥ 0.95 | Acceptable |
 | < 0.95 | Poor — check your data |
 
+**A good R² doesn't guarantee reliable parameters.** R² only measures how well the curve passes through your standard points — it says nothing about how tightly each parameter (A, B, C, D) is actually pinned down by the data. A curve can fit visually well while one parameter (often B or C, if your standards don't bracket the inflection point) is barely constrained. If a parameter's standard error is large relative to its value, or couldn't be estimated at all, the app flags it with a red border and a warning — treat back-calculated concentrations from that fit with extra caution, and consider adding standards closer to the low/high ends of the curve.
+
 ### Calculating sample concentrations
 
-Enter your sample's OD value and click **⊕ CALCULATE CONCENTRATION**.
+You have two modes:
+
+**Single** — enter one OD value and click **⊕ CALCULATE CONCENTRATION**.
+
+**Batch (paste multiple)** — paste several OD values at once (comma-separated, one per line, or a mix of both — handy for pasting a column straight from a spreadsheet) and click **⊕ CALCULATE ALL**. Every value is run through the current curve and added to Results History in one go, with a summary of how many landed in range vs. below LOD vs. extrapolated.
 
 - Results within the standard curve range are shown normally
 - Results outside the range are flagged with a ⚠ extrapolation warning — treat these with caution
@@ -92,6 +134,8 @@ All results are logged in the **Results History** table with the fit number they
 ### Exporting
 
 Click **⬇ Export CSV** to download all calculated results.
+
+Click **⬇ Export curve image (PNG)** above the plot to save the fitted curve chart itself.
 
 ---
 
