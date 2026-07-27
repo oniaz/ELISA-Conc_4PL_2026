@@ -54,6 +54,10 @@ streamlit run app.py
 
 ## How to use
 
+### Concentration units (optional)
+
+Pick a unit from the dropdown (e.g. `ng/mL`) or choose **Custom…** to type your own. This is purely cosmetic — it labels the curve's x-axis, the calculated result, and the Results History/CSV export column, but doesn't affect the fit or any calculation. Leave it as `(none)` to keep everything unit-agnostic, as before.
+
 ### Entering standard curve data
 
 You have three input modes:

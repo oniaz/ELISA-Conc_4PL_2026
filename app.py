@@ -331,7 +331,7 @@ def build_standard_csv(concentration, od):
     return df.to_csv(index=False).encode()
 
 # ── Plot ───────────────────────────────────────────────────────────────────────
-def make_figure(A, B, C, D, OD, concentration, sample_points=None):
+def make_figure(A, B, C, D, OD, concentration, sample_points=None, units=""):
     """
     Plot per manual: X-axis = concentration, Y-axis = OD (corrected if applicable).
     OD and concentration arrays passed in are already corrected (zero-subtracted if applicable).
@@ -374,7 +374,8 @@ def make_figure(A, B, C, D, OD, concentration, sample_points=None):
     ax.tick_params(colors="#aaa", labelsize=8)
     ax.xaxis.label.set_color("#888")
     ax.yaxis.label.set_color("#888")
-    ax.set_xlabel("Concentration", fontsize=9, fontfamily="monospace")
+    x_label = f"Concentration ({units})" if units else "Concentration"
+    ax.set_xlabel(x_label, fontsize=9, fontfamily="monospace")
     ax.set_ylabel("OD (450 nm)", fontsize=9, fontfamily="monospace")
     ax.set_title("4PL Standard Curve", color="#1a1a1a", fontsize=11,
                  fontfamily="monospace", pad=12)
@@ -409,6 +410,7 @@ for key, val in {
     "fit_count": 0,
     "confirm_reset_points": False,
     "confirm_clear_results": False,
+    "units": "",
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -427,6 +429,26 @@ left, right = st.columns([1, 1.9], gap="large")
 with left:
     # ── Standard curve inputs
     st.markdown('<div class="section-head">Standard Curve</div>', unsafe_allow_html=True)
+
+    UNIT_OPTIONS = [
+        "(none)", "pg/mL", "ng/mL", "µg/mL", "mg/mL",
+        "mIU/mL", "IU/mL", "U/mL", "ng/dL", "pg/dL",
+        "nmol/L", "pmol/L", "nM", "µM", "Custom…"
+    ]
+    unit_choice = st.selectbox(
+        "Concentration units (optional)",
+        UNIT_OPTIONS,
+        key="unit_choice",
+        help="Purely cosmetic — labels the axis, results, and exports. Doesn't affect the fit or any calculations."
+    )
+    if unit_choice == "Custom…":
+        st.session_state.units = st.text_input(
+            "Custom unit", placeholder="e.g. copies/mL", key="custom_unit_input"
+        ).strip()
+    elif unit_choice == "(none)":
+        st.session_state.units = ""
+    else:
+        st.session_state.units = unit_choice
 
     # Mode toggle
     mode = st.radio(
@@ -904,6 +926,7 @@ with left:
         else:
             od_display = f'<span class="od-val">OD {raw_od:.4f}</span>'
 
+        unit_suffix = st.session_state.units if st.session_state.units else "conc"
         conc_display = (
             '<span class="conc-val" style="color:#c0392b">below LOD</span>'
             '<span style="color:#aaa; font-size:0.75rem;"> (below lowest standard)</span>'
@@ -912,7 +935,7 @@ with left:
             '<span style="color:#aaa; font-size:0.75rem;"> (cannot extrapolate)</span>'
         ) if extrap and conc_val is None else (
             f'<span class="conc-val">{conc_val:.4f}</span>'
-            '<span style="color:#aaa; font-size:0.75rem;"> conc</span>'
+            f'<span style="color:#aaa; font-size:0.75rem;"> {unit_suffix}</span>'
         )
 
         st.markdown(f"""
@@ -975,6 +998,8 @@ with right:
 
         df_full = pd.DataFrame(st.session_state.results)
         df_display = df_full.drop(columns=["_od_corrected", "_conc_value"], errors="ignore")
+        if st.session_state.units:
+            df_display = df_display.rename(columns={"Concentration": f"Concentration ({st.session_state.units})"})
         selection = st.dataframe(
             df_display, use_container_width=True, hide_index=True,
             on_select="rerun", selection_mode="multi-row", key="results_table"
@@ -1026,7 +1051,7 @@ with right:
                 st.session_state.A, st.session_state.B,
                 st.session_state.C, st.session_state.D,
                 st.session_state.OD, st.session_state.concentration,
-                sample_points
+                sample_points, units=st.session_state.units
             )
             st.pyplot(fig, use_container_width=True)
 
